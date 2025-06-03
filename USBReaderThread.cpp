@@ -160,11 +160,13 @@ void USBReaderThread::run()
             // 更新性能统计（每秒一次）
             qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
             if (currentTime - m_lastStatTime >= 1000) {
+
                 quint64 bytesPerSecond = m_bytesReceived * 1000 / (currentTime - m_lastStatTime);
                 quint32 samplesPerSecond = m_samplesReceived * 1000 / (currentTime - m_lastStatTime);
 
                 emit statisticsUpdated(bytesPerSecond, samplesPerSecond);
 
+                qDebug()<<"aaaaaaa: "<<currentTime - m_lastStatTime;
                 qDebug() << QString("性能统计: %1 KB/s, %2 样本/s").arg(bytesPerSecond / 1024.0, 0, 'f', 1).arg(samplesPerSecond);
 
                 m_bytesReceived = 0;

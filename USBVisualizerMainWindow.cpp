@@ -21,7 +21,7 @@
 */
 
 #define YDefaultValue 4096     //Y轴默认值
-#define MaxBufferSizeValue 200 //绘图缓冲区大小
+#define MaxBufferSizeValue 2000 //绘图缓冲区大小
 
 // 主窗口实现
 USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
@@ -480,6 +480,7 @@ void USBVisualizerMainWindow::connectDevice()
 
     connect(m_readerThread, &USBReaderThread::dataReceived, this, &USBVisualizerMainWindow::onDataReceived);
     connect(m_readerThread, &USBReaderThread::errorOccurred, this, &USBVisualizerMainWindow::onUSBError);
+    //实时显示传输速率等信息
     connect(m_readerThread, &USBReaderThread::statisticsUpdated, this, &USBVisualizerMainWindow::onStatisticsUpdated);
 
     if (m_readerThread->setDevice(deviceInfo.device)) {
@@ -628,10 +629,10 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
     // 将接收到的字节数据转换为uint16_t值
     for (int i = 0; i < data.size() - 1; i += 2) {
         // 方案1：如果数据是大端序（高字节在前）
-//        uint16_t rawValue = (static_cast<uint8_t>(data[i]) << 8) | static_cast<uint8_t>(data[i + 1]);
+        uint16_t rawValue = (static_cast<uint8_t>(data[i]) << 8) | static_cast<uint8_t>(data[i + 1]);
 
         // 方案2：如果数据是小端序（低字节在前）
-        uint16_t rawValue = static_cast<uint8_t>(data[i]) | (static_cast<uint8_t>(data[i + 1]) << 8);
+//        uint16_t rawValue = static_cast<uint8_t>(data[i]) | (static_cast<uint8_t>(data[i + 1]) << 8);
 
         // 提取后12位（忽略前4位）
         uint16_t value = rawValue & 0x0FFF;  // 0x0FFF = 0000 1111 1111 1111
