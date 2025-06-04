@@ -2,9 +2,11 @@
 #include <algorithm>
 #include <cstring>
 
-#define ENDPOINT 0X86
-#define CHUNKSIZE 16*1024
-#define TIMEOUT 1000
+#define ENDPOINT 0X86      //接收端点
+#define CHUNKSIZE 16*1024  //接收的缓存
+#define TIMEOUT 10         //接收数据的超时时间
+
+#define SLEEPTIME 5000     //线程睡眠时间(ms)
 // USB读取线程实现
 USBReaderThread::USBReaderThread(QObject* parent)
     : QThread(parent),
@@ -156,6 +158,7 @@ void USBReaderThread::run()
             QByteArray receivedData = buffer.left(actualLength);
             emit dataReceived(receivedData);
 
+            qDebug() << "=====================接收到一次数据==========================";
 
             // 更新性能统计（每秒一次）
             qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
@@ -166,15 +169,16 @@ void USBReaderThread::run()
 
                 emit statisticsUpdated(bytesPerSecond, samplesPerSecond);
 
-                qDebug()<<"aaaaaaa: "<<currentTime - m_lastStatTime;
-                qDebug() << QString("性能统计: %1 KB/s, %2 样本/s").arg(bytesPerSecond / 1024.0, 0, 'f', 1).arg(samplesPerSecond);
+//                qDebug() << QString("性能统计: %1 KB/s, %2 样本/s").arg(bytesPerSecond / 1024.0, 0, 'f', 1).arg(samplesPerSecond);
 
                 m_bytesReceived = 0;
                 m_samplesReceived = 0;
                 m_lastStatTime = currentTime;
             }
 
-        } else if (result == LIBUSB_ERROR_TIMEOUT) {
+        }else if(result == LIBUSB_SUCCESS && actualLength == 0){//libusb_bulk_transfer不设置超时，可能会执行(读取速率大于发送速率)
+            qDebug()<<"USB控制器缓冲区为空，立即返回success，actualLength=0，不等待，不超时";
+        }else if (result == LIBUSB_ERROR_TIMEOUT) {
             // 超时处理
             consecutiveTimeouts++;
 
@@ -184,33 +188,16 @@ void USBReaderThread::run()
 
             if (consecutiveTimeouts >= maxConsecutiveTimeouts) {
                 qDebug() << QString("连续超时 %1 次，检查设备状态").arg(consecutiveTimeouts);
-
-//                // 尝试重新激活设备
-//                if (USBDebugHelper::tryActivateDevice(m_deviceHandle)) {
-//                    qDebug() << "尝试重新激活设备";
-//                    consecutiveTimeouts = 0;  // 重置计数器
-//                }
-
-                // 或者尝试不同的端点
-//                if (consecutiveTimeouts >= maxConsecutiveTimeouts * 2) {
-//                    qDebug() << "尝试查找新的工作端点";
-//                    uint8_t newEndpoint = USBDebugHelper::findWorkingEndpoint(m_deviceHandle);
-//                    if (newEndpoint != 0 && newEndpoint != m_endpoint) {
-//                        qDebug() << QString("切换到新端点: 0x%1").arg(newEndpoint, 2, 16, QChar('0'));
-//                        m_endpoint = newEndpoint;
-//                        consecutiveTimeouts = 0;
-//                    }
-//                    else
-//                    {
-//                        qDebug() << "未查找新的工作端点...";
-
-//                    }
-//                }
             }
 
             continue;  // 超时是正常的，继续循环
 
-        } else if (result != LIBUSB_SUCCESS) {
+        }else if (result == LIBUSB_ERROR_OVERFLOW){
+            qDebug()<< "USB控制器缓冲区溢出，数据溢出，可能丢失数据,即将退出采集";
+
+            m_stopRequested = true;
+        }
+        else if (result != LIBUSB_SUCCESS) {
             if (m_stopRequested)
                 break;
 
@@ -231,8 +218,14 @@ void USBReaderThread::run()
             }
         }
 
+        qint64 currentTime2 = QDateTime::currentMSecsSinceEpoch();
+
+        qDebug()<< "接收一次数据的间隔时间(秒)："<< (currentTime2 - m_lastStatTime2) / 1000;
+
         // 短暂休眠以避免100%CPU使用
-        msleep(5);
+        msleep(SLEEPTIME);
+
+        m_lastStatTime2 = currentTime2;
     }
 
     qDebug() << "=== USB读取线程结束 ===";

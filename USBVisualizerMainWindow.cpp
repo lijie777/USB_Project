@@ -75,7 +75,7 @@ USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
     // 设置绘图更新定时器
     m_plotUpdateTimer = new QTimer(this);
     connect(m_plotUpdateTimer, &QTimer::timeout, this, &USBVisualizerMainWindow::updatePlot);
-    m_plotUpdateTimer->start(50);  // 20FPS更新率
+    m_plotUpdateTimer->start(100);  // 20FPS更新率
 
     //设置默认参数
     setupSawtoothDetector();
@@ -239,7 +239,7 @@ void USBVisualizerMainWindow::setupUI()
     m_sampleCountLabel = new QLabel("采样数: 0");
     m_bufferUsageLabel = new QLabel("缓冲区: 0%");
 
-    QGroupBox* statusGroupExp = new QGroupBox("锯齿波状态信息", this);
+    QGroupBox* statusGroupExp = new QGroupBox("三角波状态信息", this);
     statusGroupExp->setFixedHeight(120);
     controlGridLayout->addWidget(statusGroupExp, 0, 4);
 
@@ -538,9 +538,6 @@ void USBVisualizerMainWindow::startDataCollection()
     if (m_dataCollection) {
         return;
     }
-
-
-
     qDebug() << "开始数据采集";
 
     m_dataCollection = true;
@@ -645,10 +642,11 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
 //        }
 
         // 限制缓冲区大小以防止内存过度使用
-        if (m_dataBuffer.size() > m_maxBufferSize * 2) {
-            m_dataBuffer.dequeue();
-        }
+//        if (m_dataBuffer.size() > m_maxBufferSize * 2) {
+//            m_dataBuffer.dequeue();
+//        }
     }
+    qDebug()<< "onDataReceived triggered, m_dataBuffer size:" << m_dataBuffer.size();
 }
 
 void USBVisualizerMainWindow::onUSBError(const QString& error)
@@ -746,40 +744,42 @@ void USBVisualizerMainWindow::updatePlot()
 void USBVisualizerMainWindow::processDataBuffer()
 {
     QMutexLocker locker(&m_dataMutex);
+    // 批量处理缓冲区中的数据
+    int processCount = qMin(200, m_dataBuffer.size());
 
-       // 批量处理缓冲区中的数据
-       int processCount = qMin(200, m_dataBuffer.size());
+    qDebug()<< "定时器触发，processDataBuffer triggered, m_dataBuffer size:" << m_dataBuffer.size();
 
-       for (int i = 0; i < processCount; i++) {
-           if (m_dataBuffer.isEmpty()) {
-               break;
-           }
+    for (int i = 0; i < processCount; i++) {
+        if (m_dataBuffer.isEmpty()) {
+            break;
+        }
 
-           uint16_t value = m_dataBuffer.dequeue();
+        uint16_t value = m_dataBuffer.dequeue();
 
-           // 方案1：使用相对索引作为X坐标（0到m_maxBufferSize-1）
-           // 当数据满后，X坐标保持不变，数据左移
-           if (static_cast<int>(m_plotDataY.size()) < m_maxBufferSize) {
-               // 缓冲区未满，正常添加
-               m_plotDataX.push_back(static_cast<double>(m_plotDataY.size()));
-               m_plotDataY.push_back(static_cast<double>(value));
-           } else {
-               // 缓冲区已满，移除最旧的数据，添加新数据
-               m_plotDataX.pop_front();
-               m_plotDataY.pop_front();
+        // 方案1：使用相对索引作为X坐标（0到m_maxBufferSize-1）
+        // 当数据满后，X坐标保持不变，数据左移
+        if (static_cast<int>(m_plotDataY.size()) < m_maxBufferSize) {
+            // 缓冲区未满，正常添加
+            m_plotDataX.push_back(static_cast<double>(m_plotDataY.size()));
+            m_plotDataY.push_back(static_cast<double>(value));
+        } else {
+            // 缓冲区已满，移除最旧的数据，添加新数据
+            m_plotDataX.pop_front();
+            m_plotDataY.pop_front();
 
-               // 所有X坐标左移
-               for (size_t j = 0; j < m_plotDataX.size(); j++) {
-                   m_plotDataX[j] = static_cast<double>(j);
-               }
+            // 所有X坐标左移
+            for (size_t j = 0; j < m_plotDataX.size(); j++) {
+                m_plotDataX[j] = static_cast<double>(j);
+            }
 
-               // 添加新数据点
-               m_plotDataX.push_back(static_cast<double>(m_maxBufferSize - 1));
-               m_plotDataY.push_back(static_cast<double>(value));
-           }
+            // 添加新数据点
+            m_plotDataX.push_back(static_cast<double>(m_maxBufferSize - 1));
+            m_plotDataY.push_back(static_cast<double>(value));
+        }
 
-           m_sampleCounter++;
-       }
+        m_sampleCounter++;
+    }
+
 }
 
 void USBVisualizerMainWindow::setupSawtoothDetector()

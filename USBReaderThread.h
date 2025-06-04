@@ -69,6 +69,8 @@ private:
     quint64 m_bytesReceived;
     quint32 m_samplesReceived;
     qint64 m_lastStatTime;
+
+    qint64 m_lastStatTime2;
 };
 
 #endif // USBREADERTHREAD_H
