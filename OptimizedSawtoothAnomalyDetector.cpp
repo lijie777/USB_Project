@@ -130,48 +130,48 @@ void OptimizedSawtoothAnomalyDetector::setOptimalParameters()
     // 1. 计算实际采样率
     double usbDataRate = 10.0e6;  // 10 Mbps (根据实际情况修改)
     double samplingRate = usbDataRate / 16;  // 16位per sample
-      setSamplingRate(samplingRate);
+    setSamplingRate(samplingRate);
 
-      // 2. 设置自适应学习
-      setAdaptiveThresholds(true);
+    // 2. 设置自适应学习
+    setAdaptiveThresholds(true);
 
-      // 3. 频率参数（让程序自动学习）
-      setNominalFrequency(0);  // 0 表示自动学习
-      m_baselineFrequency = 0;
+    // 3. 频率参数（让程序自动学习）
+    setNominalFrequency(0);  // 0 表示自动学习
+    m_baselineFrequency = 0;
 
-      // 4. 幅度参数（全范围，自动缩小）
-      setExpectedAmplitude(0, 65535);
-      m_baselineAmplitude = 0;
+    // 4. 幅度参数（全范围，自动缩小）
+    setExpectedAmplitude(0, 65535);
+    m_baselineAmplitude = 0;
 
-      // 5. 检测阈值（适中设置）
-      setDetectionThresholds(
-          0.05,   // 频率容差 5%
-          0.10,   // 幅度容差 10%
-          0.90    // 线性度 90%
-      );
+    // 5. 检测阈值（适中设置）
+    setDetectionThresholds(
+        0.05,   // 频率容差 5%
+        0.10,   // 幅度容差 10%
+        0.90    // 线性度 90%
+    );
 
-      // 6. 学习周期（至少20个锯齿波周期）
-      // 假设锯齿波频率在1-10Hz范围
-      m_learningPeriod = static_cast<int>(samplingRate * 5);  // 学习5秒
+    // 6. 学习周期（至少20个锯齿波周期）
+    // 假设锯齿波频率在1-10Hz范围
+    m_learningPeriod = static_cast<int>(samplingRate * 5);  // 学习5秒
 
-      // 7. 记录参数
-      setRecordingDuration(10);  // 异常后记录10秒
+    // 7. 记录参数
+    setRecordingDuration(10);  // 异常后记录10秒
 
-      // 8. 性能优化
-      // 根据采样率调整分析间隔
-      if (samplingRate > 100000) {
-          // 高采样率，增加间隔
-          // 注意：ANALYSIS_INTERVAL 是常量，需要改为变量才能动态调整
-      }
+    // 8. 性能优化
+    // 根据采样率调整分析间隔
+    if (samplingRate > 100000) {
+        // 高采样率，增加间隔
+        // 注意：ANALYSIS_INTERVAL 是常量，需要改为变量才能动态调整
+    }
 
-      // 9. 启用所有异常检测（可根据需求调整）
-      for (int i = 1; i <= 8; i++) {
-          enableAnomalyType(static_cast<SawtoothAnomalyType>(i), true);
-      }
+    // 9. 启用所有异常检测（可根据需求调整）
+    for (int i = 1; i <= 8; i++) {
+        enableAnomalyType(static_cast<SawtoothAnomalyType>(i), true);
+    }
 
-      LOG_INFO("锯齿波检测器优化配置完成");
-      LOG_INFO("采样率: {} Hz", samplingRate);
-      LOG_INFO("学习周期: {} 样本 (约{}秒)", m_learningPeriod, m_learningPeriod/samplingRate);
+    LOG_INFO("锯齿波检测器优化配置完成");
+    LOG_INFO("采样率: {} Hz", samplingRate);
+    LOG_INFO("学习周期: {} 样本 (约{}秒)", m_learningPeriod, m_learningPeriod/samplingRate);
 }
 
 void OptimizedSawtoothAnomalyDetector::detectPhaseTransition()

@@ -3,10 +3,14 @@
 #include <cstring>
 
 #define ENDPOINT 0X86      //接收端点
-#define CHUNKSIZE 16*1024  //接收的缓存
+#define CHUNKSIZE 4*1024  //接收的缓存
 #define TIMEOUT 10         //接收数据的超时时间
 
-#define SLEEPTIME 5000     //线程睡眠时间(ms)
+#define SLEEPTIME 800     //线程睡眠时间(ms)
+
+// 每次读取4096个字节，每次睡眠时间为800，传输速率大概为5KB/s
+
+
 // USB读取线程实现
 USBReaderThread::USBReaderThread(QObject* parent)
     : QThread(parent),
@@ -230,4 +234,3 @@ void USBReaderThread::run()
 
     qDebug() << "=== USB读取线程结束 ===";
 }
-

@@ -11,7 +11,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cstring>
-
+#include <QElapsedTimer>
 
 /*`m_maxBufferSize` 是绘图缓冲区的大小，它控制：
 - 图表上最多显示多少个数据点
@@ -21,7 +21,7 @@
 */
 
 #define YDefaultValue 4096     //Y轴默认值
-#define MaxBufferSizeValue 2000 //绘图缓冲区大小
+#define MaxBufferSizeValue 8000 //绘图缓冲区大小
 
 // 主窗口实现
 USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
@@ -67,6 +67,12 @@ USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
     connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::recordingData, this, &USBVisualizerMainWindow::onRecordingData);
     connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::recordingStopped, this, &USBVisualizerMainWindow::onRecordingStopped);
 
+    //设置默认参数
+    setupSawtoothDetector();
+
+    //创建菜单
+    createSawtoothDebugMenu();
+
     // 日志记录线程
     m_recorderThread = new AnomalyRecorderThread(this);
     connect(m_recorderThread, &AnomalyRecorderThread::recordingFinished, this, &USBVisualizerMainWindow::onRecorderThreadFinished);
@@ -76,12 +82,6 @@ USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
     m_plotUpdateTimer = new QTimer(this);
     connect(m_plotUpdateTimer, &QTimer::timeout, this, &USBVisualizerMainWindow::updatePlot);
     m_plotUpdateTimer->start(100);  // 20FPS更新率
-
-    //设置默认参数
-    setupSawtoothDetector();
-
-    //创建菜单
-    createSawtoothDebugMenu();
 
     qDebug() << "主窗口初始化完成";
 }
@@ -211,7 +211,7 @@ void USBVisualizerMainWindow::setupUI()
     // 自动缩放和缓冲区配置
     QHBoxLayout* optionsLayout = new QHBoxLayout();
     m_autoScaleCheck = new QCheckBox("自动缩放", this);
-    m_autoScaleCheck->setChecked(true);
+    m_autoScaleCheck->setChecked(false);
     optionsLayout->addWidget(m_autoScaleCheck);
 
     optionsLayout->addWidget(new QLabel("缓冲区大小:"));
@@ -574,6 +574,9 @@ void USBVisualizerMainWindow::stopDataCollection()
     }
 }
 
+
+
+
 void USBVisualizerMainWindow::clearData()
 {
     qDebug() << "清空数据缓冲区";
@@ -581,36 +584,104 @@ void USBVisualizerMainWindow::clearData()
     QMutexLocker locker(&m_dataMutex);
 
     m_dataBuffer.clear();
-    m_plotDataX.clear();
-    m_plotDataY.clear();
     m_sampleCounter = 0;
+
+    // 重置环形缓冲区
+    m_ringBufferWritePos = 0;
+    m_ringBufferFull = false;
+
+    // 重新初始化绘图缓冲区
+    if (m_plotDataX.size() == m_maxBufferSize && m_plotDataY.size() == m_maxBufferSize) {
+        // 只清空Y数据，X坐标保持不变
+        std::fill(m_plotDataY.begin(), m_plotDataY.end(), 0.0);
+    } else {
+        // 大小不匹配，重新初始化
+        m_plotDataX.clear();
+        m_plotDataY.clear();
+        m_plotDataX.resize(m_maxBufferSize);
+        m_plotDataY.resize(m_maxBufferSize);
+
+        for (int i = 0; i < m_maxBufferSize; i++) {
+            m_plotDataX[i] = static_cast<double>(i);
+            m_plotDataY[i] = 0.0;
+        }
+    }
 
     // 清空图表
     if (m_dataGraph) {
         m_dataGraph->data()->clear();
     }
     if (m_customPlot) {
+        m_customPlot->xAxis->setLabel("采样序号");
         m_customPlot->replot();
     }
 
     m_sampleCountLabel->setText("采样数: 0");
     m_bufferUsageLabel->setText("缓冲区: 0%");
-
-    // TODO:是否要重置检测器？
 }
+
+
+
+
 
 void USBVisualizerMainWindow::updatePlotSettings()
 {
     qDebug() << "更新图表设置";
 
+    int oldBufferSize = m_maxBufferSize;
     m_maxBufferSize = m_bufferSizeSpin->value();
 
-    // 调整缓冲区大小
-    QMutexLocker locker(&m_dataMutex);
+    if (oldBufferSize != m_maxBufferSize) {
+        QMutexLocker locker(&m_dataMutex);
 
-    while (static_cast<int>(m_plotDataX.size()) > m_maxBufferSize) {
-        m_plotDataX.pop_front();
-        m_plotDataY.pop_front();
+        qDebug() << QString("缓冲区大小从 %1 改为 %2").arg(oldBufferSize).arg(m_maxBufferSize);
+
+        // 保存当前数据（如果需要）
+        std::deque<double> tempData;
+        if (m_ringBufferFull || m_ringBufferWritePos > 0) {
+            // 按正确顺序提取当前数据
+            if (!m_ringBufferFull) {
+                // 未满，直接复制
+                for (int i = 0; i < m_ringBufferWritePos; i++) {
+                    tempData.push_back(m_plotDataY[i]);
+                }
+            } else {
+                // 已满，从最旧数据开始
+                int readPos = m_ringBufferWritePos;
+                for (int i = 0; i < oldBufferSize; i++) {
+                    tempData.push_back(m_plotDataY[readPos]);
+                    readPos = (readPos + 1) % oldBufferSize;
+                }
+            }
+        }
+
+        // 重新初始化缓冲区
+        m_plotDataX.clear();
+        m_plotDataY.clear();
+        m_plotDataX.resize(m_maxBufferSize);
+        m_plotDataY.resize(m_maxBufferSize);
+
+        for (int i = 0; i < m_maxBufferSize; i++) {
+            m_plotDataX[i] = static_cast<double>(i);
+            m_plotDataY[i] = 0.0;
+        }
+
+        // 恢复数据
+        m_ringBufferWritePos = 0;
+        m_ringBufferFull = false;
+
+        int restoreCount = qMin(static_cast<int>(tempData.size()), m_maxBufferSize);
+        for (int i = 0; i < restoreCount; i++) {
+            m_plotDataY[m_ringBufferWritePos] = tempData[i];
+            m_ringBufferWritePos++;
+        }
+
+        if (m_ringBufferWritePos >= m_maxBufferSize) {
+            m_ringBufferWritePos = 0;
+            m_ringBufferFull = true;
+        }
+
+        qDebug() << QString("恢复了 %1 个数据点到新缓冲区").arg(restoreCount);
     }
 
     if (m_customPlot && !m_autoScaleCheck->isChecked()) {
@@ -619,34 +690,52 @@ void USBVisualizerMainWindow::updatePlotSettings()
     }
 }
 
+
 void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
 {
+
     QMutexLocker locker(&m_dataMutex);
 
-    // 将接收到的字节数据转换为uint16_t值
-    for (int i = 0; i < data.size() - 1; i += 2) {
-        // 方案1：如果数据是大端序（高字节在前）
-        uint16_t rawValue = (static_cast<uint8_t>(data[i]) << 8) | static_cast<uint8_t>(data[i + 1]);
+      // 批量处理，减少函数调用开销
+      const uint8_t* rawData = reinterpret_cast<const uint8_t*>(data.constData());
+      // 将接收到的字节数据转换为uint16_t值
+      for (int i = 0; i < data.size() - 1; i += 2) {
 
-        // 方案2：如果数据是小端序（低字节在前）
-//        uint16_t rawValue = static_cast<uint8_t>(data[i]) | (static_cast<uint8_t>(data[i + 1]) << 8);
+          // 如果数据是小端序（低字节在前）
+  //        uint16_t rawValue = (rawData[i]) | (rawData[i + 1]) << 8);
 
-        // 提取后12位（忽略前4位）
-        uint16_t value = rawValue & 0x0FFF;  // 0x0FFF = 0000 1111 1111 1111
+          // 使用指针算术，避免多次调用 operator[]，如果数据是大端序（高字节在前）
+          uint16_t rawValue = (rawData[i] << 8) | rawData[i + 1];
 
-        m_dataBuffer.enqueue(value);
+          uint16_t value = rawValue & 0x0FFF;
 
-        // 【关键】输入到锯齿波检测器    TODO:暂时屏蔽掉
-//        if (m_sawtoothDetector) {
-//            m_sawtoothDetector->feedData(value);
-//        }
+//          qDebug()<<"value:" << value;
 
-        // 限制缓冲区大小以防止内存过度使用
-//        if (m_dataBuffer.size() > m_maxBufferSize * 2) {
-//            m_dataBuffer.dequeue();
-//        }
-    }
-    qDebug()<< "onDataReceived triggered, m_dataBuffer size:" << m_dataBuffer.size();
+          m_dataBuffer.enqueue(value);
+
+          // 【关键】输入到锯齿波检测器    TODO:暂时屏蔽掉
+  //        if (m_sawtoothDetector) {
+  //            m_sawtoothDetector->feedData(value);
+  //        }
+
+          // 限制缓冲区大小以防止内存过度使用
+//          if (m_dataBuffer.size() > m_maxBufferSize * 2) {
+//              m_dataBuffer.dequeue();
+//          }
+      }
+      qDebug()<< "onDataReceived triggered, m_dataBuffer size:" << m_dataBuffer.size();
+
+      quint64 elementSize = sizeof(uint16_t); // 2 字节
+      quint64 queueSizeInBytes = static_cast<quint64>(m_dataBuffer.size()) * elementSize;
+
+      // 阈值 4GB,防止内存泄露
+      quint64 limitBytes = 4ULL * 1024 * 1024 * 1024;
+
+      if (queueSizeInBytes > limitBytes)
+      {
+          QMessageBox::warning(nullptr, "内存警告", "当前队列占用内存超过 4GB，即将停止采集，强烈建议重启软件重新采集！");
+          stopDataCollection();
+      }
 }
 
 void USBVisualizerMainWindow::onUSBError(const QString& error)
@@ -665,19 +754,33 @@ void USBVisualizerMainWindow::onStatisticsUpdated(quint64 bytesPerSecond, quint3
     QMetaObject::invokeMethod(this, "updateStatusLabels", Qt::QueuedConnection);
 }
 
+
 void USBVisualizerMainWindow::updateStatusLabels()
 {
     double dataRateKB = m_currentDataRate / 1024.0;
-    m_dataRateLabel->setText(QString("数据率: %1 KB/s (%2 样本/s)").arg(dataRateKB, 0, 'f', 1).arg(m_currentSampleRate));
+    m_dataRateLabel->setText(QString("数据率: %1 KB/s (%2 样本/s)")
+                            .arg(dataRateKB, 0, 'f', 1)
+                            .arg(m_currentSampleRate));
 
     m_sampleCountLabel->setText(QString("采样数: %1").arg(m_sampleCounter));
 
-    int bufferUsage = (static_cast<int>(m_plotDataY.size()) * 100) / m_maxBufferSize;
+    // 计算实际缓冲区使用率
+    int bufferUsage;
+    if (!m_ringBufferFull) {
+        bufferUsage = (m_ringBufferWritePos * 100) / m_maxBufferSize;
+    } else {
+        bufferUsage = 100;  // 缓冲区已满
+    }
+
     m_bufferUsageLabel->setText(QString("缓冲区: %1%").arg(bufferUsage));
 }
 
+
+
 void USBVisualizerMainWindow::updatePlot()
 {
+    QElapsedTimer timer;
+    timer.start();
 
     if (!m_dataCollection || !m_customPlot || !m_dataGraph) {
         return;
@@ -689,40 +792,67 @@ void USBVisualizerMainWindow::updatePlot()
         return;
     }
 
-    // 只有当有新数据时才更新图表
-    static size_t lastDataSize = 0;
+    // 检查是否有新数据
     static int lastSampleCount = 0;
-
-    // 检查是否有新数据（通过采样计数判断）
     if (m_sampleCounter == lastSampleCount) {
+        qDebug()<<"数据已被处理完，暂时没有新数据";
         return;  // 没有新数据
     }
     lastSampleCount = m_sampleCounter;
-    lastDataSize = m_plotDataY.size();
 
     // 转换数据格式用于绘图
     QVector<double> xData, yData;
-    xData.reserve(static_cast<int>(m_plotDataX.size()));
-    yData.reserve(static_cast<int>(m_plotDataY.size()));
 
-    for (size_t i = 0; i < m_plotDataX.size(); ++i) {
-        xData.append(m_plotDataX[i]);
-        yData.append(m_plotDataY[i]);
+    if (!m_ringBufferFull) {
+        // 缓冲区未满，只显示已写入的数据
+        int dataCount = m_ringBufferWritePos;
+        if (dataCount == 0) {
+            return;  // 还没有数据
+        }
+
+        xData.reserve(dataCount);
+        yData.reserve(dataCount);
+
+        for (int i = 0; i < dataCount; i++) {
+            xData.append(m_plotDataX[i]);
+            yData.append(m_plotDataY[i]);
+        }
+    } else {
+        // 缓冲区已满，需要按正确顺序重组数据
+        xData.reserve(m_maxBufferSize);
+        yData.reserve(m_maxBufferSize);
+
+        // 从最旧的数据开始（写入位置的下一个位置）
+        int readPos = m_ringBufferWritePos;
+
+        for (int i = 0; i < m_maxBufferSize; i++) {
+            xData.append(static_cast<double>(i));  // X坐标保持0到maxBufferSize-1
+            yData.append(m_plotDataY[readPos]);
+
+            readPos++;
+            if (readPos >= m_maxBufferSize) {
+                readPos = 0;
+            }
+        }
     }
 
-    // 更新图表数据
-    m_dataGraph->setData(xData, yData);
 
-    // 【关键】固定X轴范围为0到m_maxBufferSize
+    // 更新图表数据
+    m_dataGraph->setData(xData, yData);  // true表示数据已排序
+
+
+    // 固定X轴范围为0到m_maxBufferSize
     m_customPlot->xAxis->setRange(0, m_maxBufferSize);
 
     // 更新X轴标签，显示实际的采样编号范围
     if (m_sampleCounter > m_maxBufferSize) {
-        int startSample = m_sampleCounter - m_maxBufferSize;
+        int startSample = m_sampleCounter - m_maxBufferSize + 1;
         int endSample = m_sampleCounter;
-        m_customPlot->xAxis->setLabel(QString("采样序号 (%1 - %2)").arg(startSample).arg(endSample));
+        m_customPlot->xAxis->setLabel(QString("采样序号 (#%1 - #%2)")
+                                      .arg(startSample)
+                                      .arg(endSample));
     } else {
-        m_customPlot->xAxis->setLabel("采样序号");
+        m_customPlot->xAxis->setLabel(QString("采样序号 (共%1个)").arg(m_sampleCounter));
     }
 
     // 自动缩放Y轴
@@ -737,17 +867,54 @@ void USBVisualizerMainWindow::updatePlot()
         m_customPlot->yAxis->setRange(m_yMinSpin->value(), m_yMaxSpin->value());
     }
 
+
     // 重绘图表
     m_customPlot->replot();
+
+    qDebug() << "updatePlot triggered, m_dataBuffer size:：" << m_dataBuffer.size();
+
+    qint64 elapsed = timer.elapsed();
+
+//    qDebug() << "processDataBuffer Function execution time:"<< elapsed;
+
 }
+
+
 
 void USBVisualizerMainWindow::processDataBuffer()
 {
-    QMutexLocker locker(&m_dataMutex);
-    // 批量处理缓冲区中的数据
-    int processCount = qMin(200, m_dataBuffer.size());
+    QElapsedTimer timer;
+    timer.start();
 
-    qDebug()<< "定时器触发，processDataBuffer triggered, m_dataBuffer size:" << m_dataBuffer.size();
+    QMutexLocker locker(&m_dataMutex);
+
+    // 确保缓冲区已初始化到正确大小
+    if (m_plotDataX.size() != m_maxBufferSize || m_plotDataY.size() != m_maxBufferSize) {
+
+
+        m_plotDataX.clear();
+        m_plotDataY.clear();
+
+        // 预分配空间
+        m_plotDataX.resize(m_maxBufferSize);
+        m_plotDataY.resize(m_maxBufferSize);
+
+        // 初始化X坐标（固定不变）
+        for (int i = 0; i < m_maxBufferSize; i++) {
+            m_plotDataX[i] = static_cast<double>(i);
+            m_plotDataY[i] = 0.0;  // 初始Y值为0
+        }
+
+        m_ringBufferWritePos = 0;
+        m_ringBufferFull = false;
+    }
+
+    // 批量处理缓冲区中的数据
+    int processCount = qMin(300, m_dataBuffer.size());
+
+    if (processCount == 0) {
+        return;  // 没有数据需要处理
+    }
 
     for (int i = 0; i < processCount; i++) {
         if (m_dataBuffer.isEmpty()) {
@@ -756,30 +923,31 @@ void USBVisualizerMainWindow::processDataBuffer()
 
         uint16_t value = m_dataBuffer.dequeue();
 
-        // 方案1：使用相对索引作为X坐标（0到m_maxBufferSize-1）
-        // 当数据满后，X坐标保持不变，数据左移
-        if (static_cast<int>(m_plotDataY.size()) < m_maxBufferSize) {
-            // 缓冲区未满，正常添加
-            m_plotDataX.push_back(static_cast<double>(m_plotDataY.size()));
-            m_plotDataY.push_back(static_cast<double>(value));
-        } else {
-            // 缓冲区已满，移除最旧的数据，添加新数据
-            m_plotDataX.pop_front();
-            m_plotDataY.pop_front();
+        // 直接写入环形缓冲区的当前位置
+        m_plotDataY[m_ringBufferWritePos] = static_cast<double>(value);
 
-            // 所有X坐标左移
-            for (size_t j = 0; j < m_plotDataX.size(); j++) {
-                m_plotDataX[j] = static_cast<double>(j);
-            }
-
-            // 添加新数据点
-            m_plotDataX.push_back(static_cast<double>(m_maxBufferSize - 1));
-            m_plotDataY.push_back(static_cast<double>(value));
+        // 更新写入位置
+        m_ringBufferWritePos++;
+        if (m_ringBufferWritePos >= m_maxBufferSize) {
+            m_ringBufferWritePos = 0;
+            m_ringBufferFull = true;//这里的环形缓冲区指的是m_plotDataY而不是m_dataBuffer，m_dataBuffer的大小由chunkSize决定
         }
 
         m_sampleCounter++;
     }
 
+    qint64 elapsed = timer.elapsed();
+
+    // 只在处理了数据时输出调试信息
+//    static int debugCounter = 0;
+//    if (++debugCounter % 20 == 0 || elapsed > 10) {
+//        qDebug() << QString("环形缓冲区状态: 处理%1个, 剩余%2个, 写入位置%3, 已满%4, 耗时%5ms")
+//                   .arg(processCount)
+//                   .arg(m_dataBuffer.size())
+//                   .arg(m_ringBufferWritePos)
+//                   .arg(m_ringBufferFull ? "是" : "否")
+//                   .arg(elapsed);
+//    }
 }
 
 void USBVisualizerMainWindow::setupSawtoothDetector()

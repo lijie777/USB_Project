@@ -65,6 +65,7 @@ private:
     int m_chunkSize;
     int m_timeout;
 
+    int m_sleepMs;
     // 性能统计
     quint64 m_bytesReceived;
     quint32 m_samplesReceived;

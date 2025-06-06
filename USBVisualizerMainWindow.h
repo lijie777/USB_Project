@@ -166,6 +166,11 @@ private:
     // 性能统计
     quint64 m_currentDataRate;
     quint32 m_currentSampleRate;
+
+    // 环形缓冲区相关
+      int m_ringBufferWritePos{0};    // 环形缓冲区写入位置
+      bool m_ringBufferFull{false};       // 缓冲区是否已满
+
 };
 
 #endif  // USBVISUALIZERMAINWINDOW_H
