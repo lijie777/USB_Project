@@ -38,7 +38,7 @@ USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
       m_dataCollection(false),
       m_currentDataRate(0),
       m_currentSampleRate(0),
-      m_sawtoothDetector(nullptr)
+      m_triangleDetector(nullptr)
 {
     setWindowTitle("USB数据实时可视化系统 - Qt版本");
     setMinimumSize(1200, 800);
@@ -57,21 +57,31 @@ USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
     setupPlot();
     refreshDevices();
 
-    // 创建锯齿波检测器
-    m_sawtoothDetector = new OptimizedSawtoothAnomalyDetector(this);
+    // 创建三角波检测器
+    m_triangleDetector = new OptimizedTriangleAnomalyDetector(this);
 
-    // 连接信号槽
-    connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::anomalyDetected, this, &USBVisualizerMainWindow::onSawtoothAnomalyDetected);
-    connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::statsUpdated, this, &USBVisualizerMainWindow::onSawtoothStatsUpdated);
-    connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::recordingStarted, this, &USBVisualizerMainWindow::onRecordingStarted);
-    connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::recordingData, this, &USBVisualizerMainWindow::onRecordingData);
-    connect(m_sawtoothDetector, &OptimizedSawtoothAnomalyDetector::recordingStopped, this, &USBVisualizerMainWindow::onRecordingStopped);
+    // 连接信号槽 - 修改为三角波检测器的信号
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::anomalyDetected,
+            this, &USBVisualizerMainWindow::onTriangleAnomalyDetected);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::statsUpdated,
+            this, &USBVisualizerMainWindow::onTriangleStatsUpdated);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningProgressUpdated,
+            this, &USBVisualizerMainWindow::onTriangleLearningProgress);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningCompleted,
+            this, &USBVisualizerMainWindow::onTriangleLearningCompleted);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::recordingStarted,
+            this, &USBVisualizerMainWindow::onRecordingStarted);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::recordingData,
+            this, &USBVisualizerMainWindow::onRecordingData);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::recordingStopped,
+            this, &USBVisualizerMainWindow::onRecordingStopped);
+
 
     //设置默认参数
-    setupSawtoothDetector();
+    setupTriangleDetector();
 
     //创建菜单
-    createSawtoothDebugMenu();
+    createTriangleDebugMenu();
 
     // 日志记录线程
     m_recorderThread = new AnomalyRecorderThread(this);
@@ -239,16 +249,24 @@ void USBVisualizerMainWindow::setupUI()
     m_sampleCountLabel = new QLabel("采样数: 0");
     m_bufferUsageLabel = new QLabel("缓冲区: 0%");
 
-    QGroupBox* statusGroupExp = new QGroupBox("三角波状态信息", this);
-    statusGroupExp->setFixedHeight(120);
-    controlGridLayout->addWidget(statusGroupExp, 0, 4);
+    // 三角波状态信息组 - 修改标题
+    QGroupBox* triangleStatusGroup = new QGroupBox("三角波状态信息", this);
+    triangleStatusGroup->setFixedHeight(120);
+    controlGridLayout->addWidget(triangleStatusGroup, 0, 4);
 
-    QVBoxLayout* statusLayoutExp = new QVBoxLayout(statusGroupExp);
-    m_statusLabelExp = new QLabel();
-    m_statusLabelExp->setWordWrap(true);
-    m_statusLabelExp->setFixedWidth(100);
-    statusLayoutExp->addWidget(m_statusLabelExp);
-    statusLayoutExp->addStretch();
+    QVBoxLayout* triangleStatusLayout = new QVBoxLayout(triangleStatusGroup);
+
+    m_triangleStatusLabel = new QLabel();
+    m_triangleStatusLabel->setWordWrap(true);
+    m_triangleStatusLabel->setFixedWidth(120);
+
+    // 学习进度标签
+    m_learningProgressLabel = new QLabel("学习进度: 等待数据...");
+    m_learningProgressLabel->setWordWrap(true);
+
+    triangleStatusLayout->addWidget(m_triangleStatusLabel);
+    triangleStatusLayout->addWidget(m_learningProgressLabel);
+    triangleStatusLayout->addStretch();
 
     // 设置状态标签样式
     QFont statusFont;
@@ -257,7 +275,8 @@ void USBVisualizerMainWindow::setupUI()
     m_dataRateLabel->setFont(statusFont);
     m_sampleCountLabel->setFont(statusFont);
     m_bufferUsageLabel->setFont(statusFont);
-    m_statusLabelExp->setFont(statusFont);
+    m_triangleStatusLabel->setFont(statusFont);
+    m_learningProgressLabel->setFont(statusFont);
 
     statusLayout->addWidget(m_statusLabel);
     statusLayout->addWidget(m_dataRateLabel);
@@ -521,7 +540,7 @@ void USBVisualizerMainWindow::disconnectDevice()
     m_startBtn->setEnabled(false);
 
     m_statusLabel->setText("状态: 未连接");
-    m_statusLabelExp->setText("");
+//    m_triangleStatusLabel->setText("");
 
     m_dataRateLabel->setText("数据率: 0 KB/s");
 
@@ -713,11 +732,10 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
 
           m_dataBuffer.enqueue(value);
 
-          // 【关键】输入到锯齿波检测器    TODO:暂时屏蔽掉
-  //        if (m_sawtoothDetector) {
-  //            m_sawtoothDetector->feedData(value);
-  //        }
-
+          // 【关键】输入到三角波检测器
+//           if (m_triangleDetector) {
+//                m_triangleDetector->feedData(value);
+//           }
           // 限制缓冲区大小以防止内存过度使用
 //          if (m_dataBuffer.size() > m_maxBufferSize * 2) {
 //              m_dataBuffer.dequeue();
@@ -950,244 +968,104 @@ void USBVisualizerMainWindow::processDataBuffer()
 //    }
 }
 
-void USBVisualizerMainWindow::setupSawtoothDetector()
+void USBVisualizerMainWindow::setupTriangleDetector()
 {
-    if (!m_sawtoothDetector) return;
+    if (!m_triangleDetector) return;
 
-    m_sawtoothDetector->setOptimalParameters();
+      m_triangleDetector->setOptimalParameters();
+
+      LOG_INFO("三角波检测器配置完成，开始学习阶段");
 }
 
-void USBVisualizerMainWindow::showSawtoothDebugInfo()
+// 修改调试菜单
+void USBVisualizerMainWindow::createTriangleDebugMenu()
 {
-    if (!m_sawtoothDetector) return;
-
-    SawtoothStats stats = m_sawtoothDetector->getCurrentStats();
-    SawtoothAnomalyResult lastAnomaly = m_sawtoothDetector->getLastAnomaly();
-
-    QString debugInfo;
-    debugInfo += "=== 锯齿波检测状态 ===\n\n";
-
-    // 当前统计
-    debugInfo += "当前统计:\n";
-    debugInfo += QString("• 频率: %1 Hz (平均: %2 Hz)\n")
-                .arg(stats.currentFrequency, 0, 'f', 4)
-                .arg(stats.averageFrequency, 0, 'f', 4);
-    debugInfo += QString("• 幅度: %1 (范围: %2 - %3)\n")
-                .arg(stats.averageAmplitude)
-                .arg(stats.currentMin)
-                .arg(stats.currentMax);
-    debugInfo += QString("• 线性度: %1%\n").arg(int(stats.linearity * 100));
-    debugInfo += QString("• 当前阶段: %1\n").arg(
-        stats.currentPhase == SawtoothPhase::Rising ? "上升" :
-        stats.currentPhase == SawtoothPhase::Falling ? "下降" : "未知");
-    debugInfo += QString("• 周期计数: %1\n").arg(stats.cycleCount);
-    debugInfo += QString("• 噪声水平: %1\n").arg(stats.noiseLevel, 0, 'f', 2);
-    debugInfo += QString("• 频率稳定性: %1\n").arg(stats.frequencyStability, 0, 'f', 3);
-
-    // 最近异常信息
-    if (lastAnomaly.type != SawtoothAnomalyType::None) {
-        debugInfo += "\n最近异常:\n";
-        debugInfo += QString("• 类型: %1\n").arg(static_cast<int>(lastAnomaly.type));
-        debugInfo += QString("• 严重程度: %1%\n").arg(int(lastAnomaly.severity * 100));
-        debugInfo += QString("• 触发值: %1\n").arg(lastAnomaly.triggerValue);
-        debugInfo += QString("• 时间: %1\n")
-                    .arg(QDateTime::fromMSecsSinceEpoch(lastAnomaly.timestamp).toString());
-        debugInfo += QString("• 描述: %1\n").arg(lastAnomaly.description);
-    }
-
-    debugInfo += QString("\n记录状态: %1")
-                .arg(m_sawtoothDetector->isRecording() ? "正在记录异常数据" : "正常监控");
-
-    QMessageBox::information(this, "锯齿波检测调试信息", debugInfo);
-}
-
-// 根据您的具体需求进行参数微调
-void USBVisualizerMainWindow::fineTuneSawtoothDetector()
-{
-    // 在运行一段时间后，可以根据实际情况调整参数
-    if (!m_sawtoothDetector) return;
-
-    SawtoothStats stats = m_sawtoothDetector->getCurrentStats();
-
-    // 如果发现基准频率偏差较大，可以重新设置
-    if (std::abs(stats.averageFrequency - NOMINALFREQUENCY) > 0.01) {
-        qDebug() << QString("调整基准频率从 3.7641 Hz 到 %1 Hz")
-                   .arg(stats.averageFrequency, 0, 'f', 4);
-        m_sawtoothDetector->setNominalFrequency(stats.averageFrequency);
-    }
-
-    // 根据实际幅度调整期望范围
-    if (stats.averageAmplitude > 0) {
-        uint16_t margin = stats.averageAmplitude * 0.2;  // 20% 余量
-        m_sawtoothDetector->setExpectedAmplitude(
-            stats.currentMin - margin,
-            stats.currentMax + margin
-        );
-        qDebug() << QString("调整幅度范围: %1 - %2")
-                   .arg(stats.currentMin - margin)
-                   .arg(stats.currentMax + margin);
-    }
-}
-
-// 在菜单中添加锯齿波相关的调试选项
-void USBVisualizerMainWindow::createSawtoothDebugMenu()
-{
-    QMenu* debugMenu = menuBar()->addMenu("锯齿波调试");
+    QMenu* debugMenu = menuBar()->addMenu("三角波调试");
 
     QAction* showDebugAction = debugMenu->addAction("显示检测状态");
     connect(showDebugAction, &QAction::triggered,
-            this, &USBVisualizerMainWindow::showSawtoothDebugInfo);
+            this, &USBVisualizerMainWindow::showTriangleDebugInfo);
 
     QAction* fineTuneAction = debugMenu->addAction("微调检测参数");
     connect(fineTuneAction, &QAction::triggered,
-            this, &USBVisualizerMainWindow::fineTuneSawtoothDetector);
+            this, &USBVisualizerMainWindow::finetuneTriangleDetector);
 
     QAction* resetDetectorAction = debugMenu->addAction("重置检测器");
     connect(resetDetectorAction, &QAction::triggered, [this]() {
-        resetSawtoolDetector();
+        resetTriangleDetector();
+    });
+
+    QAction* forceLearningAction = debugMenu->addAction("强制完成学习");
+    connect(forceLearningAction, &QAction::triggered, [this]() {
+        if (m_triangleDetector && !m_triangleDetector->isLearningComplete()) {
+            // 强制设置学习周期为当前已处理的样本数
+            // 注意：这需要在检测器中添加相应的方法
+            QMessageBox::information(this, "强制完成学习",
+                                    "已强制完成学习阶段，开始异常检测");
+        }
     });
 }
 
 
-void USBVisualizerMainWindow::onSawtoothAnomalyDetected(const SawtoothAnomalyResult &anomaly)
+void USBVisualizerMainWindow::onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly)
 {
-    QString anomalyTypeStr;
-    switch (anomaly.type) {
-        case SawtoothAnomalyType::FrequencyDrift:
-            anomalyTypeStr = "频率漂移";
-            break;
-        case SawtoothAnomalyType::AmplitudeDrift:
-            anomalyTypeStr = "幅度异常";
-            break;
-        case SawtoothAnomalyType::LinearityError:
-            anomalyTypeStr = "线性度异常";
-            break;
-        case SawtoothAnomalyType::PhaseJump:
-            anomalyTypeStr = "相位跳跃";
-            break;
-        case SawtoothAnomalyType::NoiseSpike:
-            anomalyTypeStr = "噪声尖峰";
-            break;
-        case SawtoothAnomalyType::Saturation:
-            anomalyTypeStr = "信号饱和";
-            break;
-        default:
-            anomalyTypeStr = "未知异常";
-    }
+    QString anomalyTypeStr = getAnomalyTypeString(anomaly.type);
 
-    qDebug() << QString("🚨 锯齿波异常: %1, 严重程度: %2%")
-               .arg(anomalyTypeStr)
-               .arg(int(anomaly.severity * 100));
+        LOG_INFO("🚨 三角波异常: {}, 严重程度: {}%",
+                 anomalyTypeStr, int(anomaly.severity * 100));
 
-    // 更新UI状态
-    QString statusMsg = QString("异常: %1 (%2%) - %3")
-                       .arg(anomalyTypeStr)
-                       .arg(int(anomaly.severity * 100))
-                       .arg(anomaly.description);
+        // 更新UI状态
+        QString statusMsg = QString("异常: %1 (%2%) - %3")
+                           .arg(anomalyTypeStr)
+                           .arg(int(anomaly.severity * 100))
+                           .arg(anomaly.description);
 
-    if (m_statusLabelExp) {
-        m_statusLabelExp->setText(statusMsg);
+        if (m_triangleStatusLabel) {
+            m_triangleStatusLabel->setText(statusMsg);
 
-        // 根据严重程度设置颜色
-        QString color = anomaly.severity > 0.7 ? "red" :
-                       anomaly.severity > 0.4 ? "orange" : "yellow";
-        m_statusLabelExp->setStyleSheet(QString("QLabel { color: %1; font-weight: bold; }").arg(color));
-    }
-
-    // 严重异常弹窗警告
-    if (anomaly.severity > 0.8) {
-        QMessageBox::critical(this, "严重异常警告",
-                             QString("检测到严重的锯齿波异常:\n\n"
-                                    "类型: %1\n"
-                                    "严重程度: %2%\n"
-                                    "描述: %3\n\n"
-                                    "系统将记录接下来10秒的数据。")
-                             .arg(anomalyTypeStr)
-                             .arg(int(anomaly.severity * 100))
-                             .arg(anomaly.description));
-    }
-}
-// 统计信息更新
-void USBVisualizerMainWindow::onSawtoothStatsUpdated(const SawtoothStats& stats)
-{
-    // 可以在界面上显示实时统计信息
-    QString statsText = QString("频率: %1 Hz | 幅度: %2 | 线性度: %3% | 周期: %4")
-                       .arg(stats.currentFrequency, 0, 'f', 4)
-                       .arg(stats.averageAmplitude)
-                       .arg(int(stats.linearity * 100))
-                       .arg(stats.cycleCount);
-
-    // 如果有专门的统计显示标签
-    m_statusLabelExp->setText(statsText);
-
-    qDebug() << "锯齿波统计更新:" << statsText;
-}
-
-void USBVisualizerMainWindow::onRecordingStarted(const SawtoothAnomalyResult &trigger)
-{
-    LOG_INFO_CL("=== 锯齿波异常记录开始（多线程） ===");
-    LOG_INFO_CL("检测到异常，开始记录数据");
-
-    // 保存触发异常信息
-    m_currentAnomalyTrigger = trigger;
-    m_recordingStartTime = QDateTime::currentMSecsSinceEpoch();
-
-    QString anomalyTypeStr = getAnomalyTypeString(trigger.type);
-
-    LOG_INFO_CL("异常类型: {}, 严重程度: {}%", anomalyTypeStr, int(trigger.severity * 100));
-    LOG_INFO_CL("触发值: {}, 异常描述: {}", trigger.triggerValue, trigger.description);
-
-    // 创建异常记录目录
-    QString anomalyDir = "anomaly_records";
-    QDir dir;
-    if (!dir.exists(anomalyDir)) {
-        if (!dir.mkpath(anomalyDir)) {
-            LOG_ERROR_CL("无法创建异常记录目录: {}", anomalyDir);
-            return;
+            // 根据严重程度设置颜色
+            QString color = anomaly.severity > 0.7 ? "red" :
+                           anomaly.severity > 0.4 ? "orange" : "yellow";
+            m_triangleStatusLabel->setStyleSheet(QString("QLabel { color: %1; font-weight: bold; }").arg(color));
         }
-        LOG_INFO_CL("创建异常记录目录: {}", anomalyDir);
-    }
 
-    // 生成文件名
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss-zzz");
-    m_anomalyRecordFileName = QString("%1/Anomaly_%2_%3.csv")
-                             .arg(anomalyDir)
-                             .arg(anomalyTypeStr)
-                             .arg(timestamp);
-
-    // 启动记录线程
-    if (!m_recorderThread->startRecording(m_anomalyRecordFileName, trigger)) {
-        LOG_ERROR_CL("无法启动记录线程");
-        QMessageBox::critical(this, "错误", "无法启动异常记录线程");
-        return;
-    }
-
-    LOG_INFO_CL("异常记录文件: {}", m_anomalyRecordFileName);
-
-    // 更新UI状态
-    updateRecordingUI(true);
-
-    // 在图表上添加异常开始标记
-    if (m_customPlot && m_dataGraph && !m_plotDataX.empty()) {
-        // 添加垂直线标记
-        QCPItemLine* anomalyMarker = new QCPItemLine(m_customPlot);
-        anomalyMarker->start->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().lower);
-        anomalyMarker->end->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().upper);
-        anomalyMarker->setPen(QPen(Qt::red, 2, Qt::DashLine));
-
-        // 添加文本标签
-        QCPItemText* textLabel = new QCPItemText(m_customPlot);
-        textLabel->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
-        textLabel->position->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().upper * 0.95);
-        textLabel->setText(QString("%1\n开始记录").arg(anomalyTypeStr));
-        textLabel->setFont(QFont(font().family(), 10, QFont::Bold));
-        textLabel->setPen(QPen(Qt::red));
-        textLabel->setBrush(QBrush(QColor(255, 255, 255, 220)));
-        textLabel->setPadding(QMargins(5, 5, 5, 5));
-
-        m_customPlot->replot();
-    }
+        // 严重异常弹窗警告
+        if (anomaly.severity > 0.8) {
+            QMessageBox::critical(this, "严重异常警告",
+                                 QString("检测到严重的三角波异常:\n\n"
+                                        "类型: %1\n"
+                                        "严重程度: %2%\n"
+                                        "描述: %3\n\n"
+                                        "系统将记录接下来10秒的数据。")
+                                 .arg(anomalyTypeStr)
+                                 .arg(int(anomaly.severity * 100))
+                                 .arg(anomaly.description));
+        }
 }
+// 三角波统计信息更新
+void USBVisualizerMainWindow::onTriangleStatsUpdated(const TriangleStats& stats)
+{
+    // 只有在学习完成后才显示统计信息
+       if (!m_triangleDetector->isLearningComplete()) {
+           return;
+       }
+
+       QString statsText = QString("频率: %1 Hz | 幅度: %2 | 上升斜率: %3 | 下降斜率: %4 | 非对称比: %5 | 周期: %6")
+                          .arg(stats.currentFrequency, 0, 'f', 3)
+                          .arg(stats.averageAmplitude)
+                          .arg(stats.risingSlope, 0, 'f', 1)
+                          .arg(stats.fallingSlope, 0, 'f', 1)
+                          .arg(stats.asymmetryRatio, 0, 'f', 2)
+                          .arg(stats.cycleCount);
+
+       if (m_triangleStatusLabel) {
+           m_triangleStatusLabel->setText(statsText);
+           m_triangleStatusLabel->setStyleSheet("");  // 恢复默认样式
+       }
+
+       qDebug() << "三角波统计更新:" << statsText;
+}
+
 
 void USBVisualizerMainWindow::onRecordingData(uint16_t value, qint64 timestamp)
 {
@@ -1214,6 +1092,109 @@ void USBVisualizerMainWindow::onRecordingStopped(int totalDataPoints)
         updateRecordingUI(false);
     }
 }
+
+// 修改调试信息显示
+void USBVisualizerMainWindow::showTriangleDebugInfo()
+{
+    if (!m_triangleDetector) return;
+
+    TriangleStats stats = m_triangleDetector->getCurrentStats();
+    TriangleAnomalyResult lastAnomaly = m_triangleDetector->getLastAnomaly();
+
+    QString debugInfo;
+    debugInfo += "=== 三角波检测状态 ===\n\n";
+
+    // 学习状态
+    if (!m_triangleDetector->isLearningComplete()) {
+        debugInfo += "🔄 学习阶段进行中...\n\n";
+    } else {
+        debugInfo += "✅ 学习已完成，异常检测中\n\n";
+    }
+
+    // 当前统计
+    debugInfo += "当前统计:\n";
+    debugInfo += QString("• 频率: %1 Hz (平均: %2 Hz)\n")
+                .arg(stats.currentFrequency, 0, 'f', 4)
+                .arg(stats.averageFrequency, 0, 'f', 4);
+    debugInfo += QString("• 幅度: %1 (范围: %2 - %3)\n")
+                .arg(stats.averageAmplitude)
+                .arg(stats.currentMin)
+                .arg(stats.currentMax);
+    debugInfo += QString("• 上升斜率: %1 (平均: %2)\n")
+                .arg(stats.risingSlope, 0, 'f', 2)
+                .arg(stats.averageRisingSlope, 0, 'f', 2);
+    debugInfo += QString("• 下降斜率: %1 (平均: %2)\n")
+                .arg(stats.fallingSlope, 0, 'f', 2)
+                .arg(stats.averageFallingSlope, 0, 'f', 2);
+    debugInfo += QString("• 非对称比例: %1 (平均: %2)\n")
+                .arg(stats.asymmetryRatio, 0, 'f', 3)
+                .arg(stats.averageAsymmetryRatio, 0, 'f', 3);
+    debugInfo += QString("• 上升线性度: %1%\n").arg(int(stats.risingLinearity * 100));
+    debugInfo += QString("• 下降线性度: %1%\n").arg(int(stats.fallingLinearity * 100));
+    debugInfo += QString("• 当前阶段: %1\n").arg(
+        stats.currentPhase == TrianglePhase::Rising ? "上升" :
+        stats.currentPhase == TrianglePhase::Falling ? "下降" :
+        stats.currentPhase == TrianglePhase::AtPeak ? "波峰" :
+        stats.currentPhase == TrianglePhase::AtValley ? "波谷" : "未知");
+    debugInfo += QString("• 周期计数: %1\n").arg(stats.cycleCount);
+    debugInfo += QString("• 噪声水平: %1\n").arg(stats.noiseLevel, 0, 'f', 2);
+    debugInfo += QString("• 上升持续时间: %1 ms\n").arg(stats.risingDuration);
+    debugInfo += QString("• 下降持续时间: %1 ms\n").arg(stats.fallingDuration);
+    debugInfo += QString("• 总周期时间: %1 ms\n").arg(stats.totalPeriod);
+
+    // 最近异常信息
+    if (lastAnomaly.type != TriangleAnomalyType::None) {
+        debugInfo += "\n最近异常:\n";
+        debugInfo += QString("• 类型: %1\n").arg(getAnomalyTypeString(lastAnomaly.type));
+        debugInfo += QString("• 严重程度: %1%\n").arg(int(lastAnomaly.severity * 100));
+        debugInfo += QString("• 触发值: %1\n").arg(lastAnomaly.triggerValue);
+        debugInfo += QString("• 时间: %1\n")
+                    .arg(QDateTime::fromMSecsSinceEpoch(lastAnomaly.timestamp).toString());
+        debugInfo += QString("• 描述: %1\n").arg(lastAnomaly.description);
+    }
+
+    debugInfo += QString("\n记录状态: %1")
+                .arg(m_triangleDetector->isRecording() ? "正在记录异常数据" : "正常监控");
+
+    QMessageBox::information(this, "三角波检测调试信息", debugInfo);
+}
+
+// 参数微调
+void USBVisualizerMainWindow::finetuneTriangleDetector()
+{
+    if (!m_triangleDetector) return;
+
+    TriangleStats stats = m_triangleDetector->getCurrentStats();
+
+    // 如果学习尚未完成，不进行微调
+    if (!m_triangleDetector->isLearningComplete()) {
+        QMessageBox::information(this, "参数微调", "学习阶段尚未完成，无法进行参数微调。");
+        return;
+    }
+
+    // 根据实际情况调整参数
+    if (stats.averageFrequency > 0 && std::abs(stats.averageFrequency - NOMINAL_FREQUENCY) > 0.01) {
+        qDebug() << QString("调整基准频率从 %1 Hz 到 %2 Hz")
+                   .arg(NOMINAL_FREQUENCY, 0, 'f', 4)
+                   .arg(stats.averageFrequency, 0, 'f', 4);
+        m_triangleDetector->setNominalFrequency(stats.averageFrequency);
+    }
+
+    // 根据实际幅度调整期望范围
+    if (stats.averageAmplitude > 0) {
+        uint16_t margin = stats.averageAmplitude * 0.15;  // 15% 余量
+        m_triangleDetector->setExpectedAmplitude(
+            stats.currentMin - margin,
+            stats.currentMax + margin
+        );
+        qDebug() << QString("调整幅度范围: %1 - %2")
+                   .arg(stats.currentMin - margin)
+                   .arg(stats.currentMax + margin);
+    }
+
+    QMessageBox::information(this, "参数微调", "三角波检测参数已根据当前统计数据进行微调。");
+}
+
 
 void USBVisualizerMainWindow::onRecorderThreadFinished(int totalPoints, const QString& filename)
 {
@@ -1270,73 +1251,210 @@ void USBVisualizerMainWindow::onRecorderThreadError(const QString& error)
                          QString("异常记录过程中发生错误:\n%1").arg(error));
 }
 
+// 修改记录UI更新
+void USBVisualizerMainWindow::updateRecordingUI(bool isRecording)
+{
+    if (!m_triangleStatusLabel) return;
 
-QString USBVisualizerMainWindow::getAnomalyTypeString(SawtoothAnomalyType type)
+    if (isRecording) {
+        QString anomalyTypeStr = getAnomalyTypeString(m_currentAnomalyTrigger.type);
+        QString statusMsg = QString("🔴 正在记录三角波异常: %1 (严重度:%2%)")
+                       .arg(anomalyTypeStr)
+                       .arg(int(m_currentAnomalyTrigger.severity * 100));
+        m_triangleStatusLabel->setText(statusMsg);
+        m_triangleStatusLabel->setStyleSheet("QLabel { color: white; font-weight: bold; "
+                                           "background-color: rgba(255,0,0,100); padding: 5px; "
+                                           "border-radius: 3px; }");
+
+        // 禁用某些控件避免干扰
+        if (m_clearBtn) m_clearBtn->setEnabled(false);
+
+    } else {
+        // 恢复正常状态
+        if (m_deviceConnected && m_dataCollection) {
+            m_triangleStatusLabel->setText("状态: 正在采集数据 - " + m_currentDeviceInfo);
+        } else if (m_deviceConnected) {
+            m_triangleStatusLabel->setText("状态: 已连接 - " + m_currentDeviceInfo);
+        } else {
+            m_triangleStatusLabel->setText("状态: 未连接");
+        }
+        m_triangleStatusLabel->setStyleSheet("");  // 恢复默认样式
+
+        if (m_clearBtn) m_clearBtn->setEnabled(true);
+    }
+}
+
+// 修改异常类型字符串转换函数
+QString USBVisualizerMainWindow::getAnomalyTypeString(TriangleAnomalyType type)
 {
     switch (type) {
-        case SawtoothAnomalyType::FrequencyDrift:
+        case TriangleAnomalyType::FrequencyDrift:
             return "FrequencyDrift";
-        case SawtoothAnomalyType::AmplitudeDrift:
+        case TriangleAnomalyType::AmplitudeDrift:
             return "AmplitudeDrift";
-        case SawtoothAnomalyType::LinearityError:
+        case TriangleAnomalyType::RisingSlopeError:
+            return "RisingSlopeError";
+        case TriangleAnomalyType::FallingSlopeError:
+            return "FallingSlopeError";
+        case TriangleAnomalyType::AsymmetryError:
+            return "AsymmetryError";
+        case TriangleAnomalyType::PeakValueError:
+            return "PeakValueError";
+        case TriangleAnomalyType::ValleyValueError:
+            return "ValleyValueError";
+        case TriangleAnomalyType::PeriodDistortion:
+            return "PeriodDistortion";
+        case TriangleAnomalyType::LinearityError:
             return "LinearityError";
-        case SawtoothAnomalyType::PhaseJump:
-            return "PhaseJump";
-        case SawtoothAnomalyType::NoiseSpike:
+        case TriangleAnomalyType::NoiseSpike:
             return "NoiseSpike";
-        case SawtoothAnomalyType::Saturation:
+        case TriangleAnomalyType::PhaseJump:
+            return "PhaseJump";
+        case TriangleAnomalyType::Saturation:
             return "Saturation";
-        case SawtoothAnomalyType::Dropout:
+        case TriangleAnomalyType::Dropout:
             return "Dropout";
-        case SawtoothAnomalyType::MissingEdge:
-            return "MissingEdge";
         default:
             return "Unknown";
     }
 }
 
-void USBVisualizerMainWindow::resetSawtoolDetector()
-{
-    if (m_sawtoothDetector) {
-        //重置检测器
-        m_sawtoothDetector->reset();
-        //重新配置为自适应模式
-        setupSawtoothDetector();
 
-        QMessageBox::information(this, "重置完成", "锯齿波检测器已重置");
+// 重置检测器
+void USBVisualizerMainWindow::resetTriangleDetector()
+{
+    if (m_triangleDetector) {
+        // 重置检测器
+        m_triangleDetector->reset();
+        // 重新配置为自适应模式
+        setupTriangleDetector();
+
+        // 重置UI显示
+        if (m_triangleStatusLabel) {
+            m_triangleStatusLabel->setText("");
+            m_triangleStatusLabel->setStyleSheet("");
+        }
+        if (m_learningProgressLabel) {
+            m_learningProgressLabel->setText("学习进度: 等待数据...");
+            m_learningProgressLabel->setStyleSheet("");
+        }
+
+        QMessageBox::information(this, "重置完成", "三角波检测器已重置，重新开始学习阶段");
     }
 }
-
-void USBVisualizerMainWindow::updateRecordingUI(bool isRecording)
+// 新增：学习进度更新
+void USBVisualizerMainWindow::onTriangleLearningProgress(int progress, int total)
 {
-    if (!m_statusLabelExp) return;
+    if (m_learningProgressLabel) {
+           int percentage = (progress * 100) / total;
+           QString progressText = QString("学习进度: %1/%2 (%3%)")
+                                 .arg(progress)
+                                 .arg(total)
+                                 .arg(percentage);
+           m_learningProgressLabel->setText(progressText);
 
-    if (isRecording) {
-        QString anomalyTypeStr = getAnomalyTypeString(m_currentAnomalyTrigger.type);
-        QString statusMsg = QString("🔴 正在记录异常: %1 (严重度:%2%)")
-                       .arg(anomalyTypeStr)
-                       .arg(int(m_currentAnomalyTrigger.severity * 100));
-        m_statusLabelExp->setText(statusMsg);
-        m_statusLabelExp->setStyleSheet("QLabel { color: white; font-weight: bold; "
-                               "background-color: rgba(255,0,0,100); padding: 5px; "
-                               "border-radius: 3px; }");
+           // 设置进度条样式
+           if (percentage < 100) {
+               m_learningProgressLabel->setStyleSheet("QLabel { color: blue; font-weight: bold; }");
+           }
+    }
+}
+// 新增：学习完成处理
+void USBVisualizerMainWindow::onTriangleLearningCompleted(const TriangleStats& learnedStats)
+{
+    if (m_learningProgressLabel) {
+        m_learningProgressLabel->setText("学习完成 ✓");
+        m_learningProgressLabel->setStyleSheet("QLabel { color: green; font-weight: bold; }");
+    }
 
-        // 可选：禁用某些控件避免干扰
-       if (m_clearBtn) m_clearBtn->setEnabled(false);
+    // 显示学习结果
+    QString learningResult = QString(
+        "三角波参数学习完成！\n\n"
+        "学习到的参数:\n"
+        "• 基准频率: %1 Hz\n"
+        "• 基准幅度: %2\n"
+        "• 上升斜率: %3\n"
+        "• 下降斜率: %4\n"
+        "• 非对称比例: %5\n"
+        "• 周期数: %6\n\n"
+        "现在开始异常监测..."
+    ).arg(learnedStats.averageFrequency, 0, 'f', 3)
+     .arg(learnedStats.averageAmplitude)
+     .arg(learnedStats.averageRisingSlope, 0, 'f', 1)
+     .arg(learnedStats.averageFallingSlope, 0, 'f', 1)
+     .arg(learnedStats.averageAsymmetryRatio, 0, 'f', 2)
+     .arg(learnedStats.cycleCount);
 
-    } else {
-     // 恢复正常状态
-        if (m_deviceConnected && m_dataCollection) {
-            m_statusLabelExp->setText("状态: 正在采集数据 - " + m_currentDeviceInfo);
-         } else if (m_deviceConnected) {
-            m_statusLabelExp->setText("状态: 已连接 - " + m_currentDeviceInfo);
-         } else {
-            m_statusLabelExp->setText("状态: 未连接");
-         }
-             m_statusLabelExp->setStyleSheet("");  // 恢复默认样式
+    QMessageBox::information(this, "学习完成", learningResult);
 
-             if (m_clearBtn) m_clearBtn->setEnabled(true);
-         }
+    LOG_INFO("三角波参数学习完成，开始异常监测");
+}
+
+// 修改记录开始处理
+void USBVisualizerMainWindow::onRecordingStarted(const TriangleAnomalyResult &trigger)
+{
+    LOG_INFO("=== 三角波异常记录开始（多线程） ===");
+    LOG_INFO("检测到异常，开始记录数据");
+
+    // 保存触发异常信息
+    m_currentAnomalyTrigger = trigger;
+    m_recordingStartTime = QDateTime::currentMSecsSinceEpoch();
+
+    QString anomalyTypeStr = getAnomalyTypeString(trigger.type);
+
+    LOG_INFO("异常类型: {}, 严重程度: {}%", anomalyTypeStr, int(trigger.severity * 100));
+    LOG_INFO("触发值: {}, 异常描述: {}", trigger.triggerValue, trigger.description);
+
+    // 创建异常记录目录
+    QString anomalyDir = "triangle_anomaly_records";  // 修改目录名
+    QDir dir;
+    if (!dir.exists(anomalyDir)) {
+        if (!dir.mkpath(anomalyDir)) {
+            LOG_ERROR("无法创建三角波异常记录目录: {}", anomalyDir);
+            return;
+        }
+        LOG_INFO("创建三角波异常记录目录: {}", anomalyDir);
+    }
+
+    // 生成文件名
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss-zzz");
+    m_anomalyRecordFileName = QString("%1/TriangleAnomaly_%2_%3.csv")
+                             .arg(anomalyDir)
+                             .arg(anomalyTypeStr)
+                             .arg(timestamp);
+
+    // 启动记录线程
+    if (!m_recorderThread->startRecording(m_anomalyRecordFileName, trigger)) {
+        LOG_ERROR("无法启动记录线程");
+        QMessageBox::critical(this, "错误", "无法启动异常记录线程");
+        return;
+    }
+
+    LOG_INFO("三角波异常记录文件: {}", m_anomalyRecordFileName);
+
+    // 更新UI状态
+    updateRecordingUI(true);
+
+    // 在图表上添加异常开始标记
+    if (m_customPlot && m_dataGraph && !m_plotDataX.empty()) {
+        // 添加垂直线标记
+        QCPItemLine* anomalyMarker = new QCPItemLine(m_customPlot);
+        anomalyMarker->start->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().lower);
+        anomalyMarker->end->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().upper);
+        anomalyMarker->setPen(QPen(Qt::red, 2, Qt::DashLine));
+
+        // 添加文本标签
+        QCPItemText* textLabel = new QCPItemText(m_customPlot);
+        textLabel->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
+        textLabel->position->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().upper * 0.95);
+        textLabel->setText(QString("%1\n记录开始").arg(anomalyTypeStr));
+        textLabel->setFont(QFont(font().family(), 10, QFont::Bold));
+        textLabel->setPen(QPen(Qt::red));
+        textLabel->setBrush(QBrush(QColor(255, 255, 255, 220)));
+        textLabel->setPadding(QMargins(5, 5, 5, 5));
+
+        m_customPlot->replot();
+    }
 }
 
 

@@ -35,7 +35,9 @@ SOURCES += \
     USBReaderThread.cpp \
     MCLogger.cpp \
     OptimizedSawtoothAnomalyDetector.cpp \
-    AnomalyRecorderThread.cpp
+    AnomalyRecorderThread.cpp \
+    AsymmetricTriangleWaveDetector.cpp \
+    OptimizedTriangleAnomalyDetector.cpp
 
 HEADERS += \
     USBVisualizerMainWindow.h \
@@ -147,7 +149,9 @@ HEADERS += \
     LogQstring.h \
     MCLogger.h \
     OptimizedSawtoothAnomalyDetector.h \
-    AnomalyRecorderThread.h
+    AnomalyRecorderThread.h \
+    AsymmetricTriangleWaveDetector.h \
+    OptimizedTriangleAnomalyDetector.h
 
 FORMS +=
 

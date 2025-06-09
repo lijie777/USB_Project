@@ -13,7 +13,8 @@ AnomalyRecorderThread::~AnomalyRecorderThread()
     stopRecording();
 }
 
-bool AnomalyRecorderThread::startRecording(const QString& filename, const SawtoothAnomalyResult& trigger)
+// 修改启动记录方法
+bool AnomalyRecorderThread::startRecording(const QString& filename, const TriangleAnomalyResult& trigger)
 {
     QMutexLocker locker(&m_mutex);
 
@@ -23,7 +24,7 @@ bool AnomalyRecorderThread::startRecording(const QString& filename, const Sawtoo
     }
 
     m_filename = filename;
-    m_triggerInfo = trigger;
+    m_triggerInfo = trigger;  // 保存三角波异常触发信息
     m_startTime = QDateTime::currentMSecsSinceEpoch();
     m_stopRequested = false;
     m_totalRecorded = 0;
@@ -118,14 +119,57 @@ void AnomalyRecorderThread::run()
     emit recordingFinished(m_totalRecorded, m_filename);
 }
 
+// 修改文件头写入方法
 bool AnomalyRecorderThread::writeHeader(QTextStream& stream)
 {
-    QString anomalyTypeStr;
-    // ... (异常类型转换代码，与之前相同)
+    QString anomalyTypeStr = getTriangleAnomalyTypeString(m_triggerInfo.type);
+    QString phaseStr;
 
-    stream << "# 锯齿波异常记录文件\n";
+    // 转换相位枚举为字符串
+    switch (m_triggerInfo.phaseWhenDetected) {
+        case TrianglePhase::Rising:
+            phaseStr = "上升阶段";
+            break;
+        case TrianglePhase::Falling:
+            phaseStr = "下降阶段";
+            break;
+        case TrianglePhase::AtPeak:
+            phaseStr = "波峰";
+            break;
+        case TrianglePhase::AtValley:
+            phaseStr = "波谷";
+            break;
+        default:
+            phaseStr = "未知";
+            break;
+    }
+
+    // 写入详细的文件头信息
+    stream << "# 三角波异常记录文件\n";
     stream << "# 生成时间: " << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
-    // ... (其他头信息)
+    stream << "# 文件格式版本: 2.0\n";
+    stream << "#\n";
+    stream << "# === 异常触发信息 ===\n";
+    stream << "# 异常类型: " << anomalyTypeStr << "\n";
+    stream << "# 异常严重程度: " << QString::number(m_triggerInfo.severity * 100, 'f', 2) << "%\n";
+    stream << "# 触发值: " << m_triggerInfo.triggerValue << "\n";
+    stream << "# 触发时间戳: " << m_triggerInfo.timestamp << " ms\n";
+    stream << "# 检测阶段: " << phaseStr << "\n";
+    stream << "# 异常描述: " << m_triggerInfo.description << "\n";
+    stream << "#\n";
+    stream << "# === 记录配置 ===\n";
+    stream << "# 记录开始时间: " << QDateTime::fromMSecsSinceEpoch(m_startTime).toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
+    stream << "# 采样率: 2560 Hz (估算)\n";
+    stream << "# 数据格式: 12位ADC值 (0-4095)\n";
+    stream << "#\n";
+    stream << "# === 数据列说明 ===\n";
+    stream << "# Index: 数据点序号 (从1开始)\n";
+    stream << "# Timestamp(ms): 绝对时间戳 (毫秒)\n";
+    stream << "# Value: ADC采样值 (0-4095)\n";
+    stream << "# RelativeTime(ms): 相对于记录开始的时间 (毫秒)\n";
+    stream << "#\n";
+
+    // CSV头
     stream << "Index,Timestamp(ms),Value,RelativeTime(ms)\n";
 
     return stream.status() == QTextStream::Ok;
@@ -140,10 +184,53 @@ void AnomalyRecorderThread::writeData(QTextStream& stream, const RecordData& dat
            << relativeTime << "\n";
 }
 
+// 修改文件尾写入方法
 void AnomalyRecorderThread::writeFooter(QTextStream& stream)
 {
+    qint64 endTime = QDateTime::currentMSecsSinceEpoch();
+    qint64 recordingDuration = endTime - m_startTime;
+
     stream << "#\n";
-    stream << "# 记录结束\n";
+    stream << "# === 记录完成信息 ===\n";
+    stream << "# 记录结束时间: " << QDateTime::fromMSecsSinceEpoch(endTime).toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
     stream << "# 总数据点: " << m_totalRecorded << "\n";
-    stream << "# 记录时长: " << (QDateTime::currentMSecsSinceEpoch() - m_startTime) << " ms\n";
+    stream << "# 记录时长: " << recordingDuration << " ms (" << (recordingDuration / 1000.0) << " 秒)\n";
+    stream << "# 平均采样率: " << QString::number((m_totalRecorded * 1000.0) / recordingDuration, 'f', 2) << " Hz\n";
+    stream << "#\n";
+    stream << "# 文件结束\n";
+}
+
+// 新增：三角波异常类型转换函数
+QString AnomalyRecorderThread::getTriangleAnomalyTypeString(TriangleAnomalyType type)
+{
+    switch (type) {
+        case TriangleAnomalyType::FrequencyDrift:
+            return "频率漂移";
+        case TriangleAnomalyType::AmplitudeDrift:
+            return "幅度异常";
+        case TriangleAnomalyType::RisingSlopeError:
+            return "上升沿斜率异常";
+        case TriangleAnomalyType::FallingSlopeError:
+            return "下降沿斜率异常";
+        case TriangleAnomalyType::AsymmetryError:
+            return "非对称比例异常";
+        case TriangleAnomalyType::PeakValueError:
+            return "波峰值异常";
+        case TriangleAnomalyType::ValleyValueError:
+            return "波谷值异常";
+        case TriangleAnomalyType::PeriodDistortion:
+            return "周期失真";
+        case TriangleAnomalyType::LinearityError:
+            return "线性度异常";
+        case TriangleAnomalyType::NoiseSpike:
+            return "噪声尖峰";
+        case TriangleAnomalyType::PhaseJump:
+            return "相位跳跃";
+        case TriangleAnomalyType::Saturation:
+            return "信号饱和";
+        case TriangleAnomalyType::Dropout:
+            return "信号丢失";
+        default:
+            return "未知异常";
+    }
 }

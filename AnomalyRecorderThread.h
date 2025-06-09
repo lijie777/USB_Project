@@ -8,7 +8,7 @@
 #include <QQueue>
 #include <QFile>
 #include <QTextStream>
-#include "OptimizedSawtoothAnomalyDetector.h"
+#include "OptimizedTriangleAnomalyDetector.h"  // 改为三角波检测器
 #include "MCLogger.h"
 
 struct RecordData {
@@ -25,7 +25,7 @@ public:
     explicit AnomalyRecorderThread(QObject *parent = nullptr);
     ~AnomalyRecorderThread();
 
-    bool startRecording(const QString& filename, const SawtoothAnomalyResult& trigger);
+    bool startRecording(const QString& filename, const TriangleAnomalyResult& trigger);
     void stopRecording();
     void addData(uint16_t value, qint64 timestamp);
 
@@ -47,7 +47,7 @@ private:
 
     // 文件相关
     QString m_filename;
-    SawtoothAnomalyResult m_triggerInfo;
+    TriangleAnomalyResult m_triggerInfo;  // 改为三角波异常结果
     qint64 m_startTime;
     std::atomic<int> m_totalRecorded;
 
@@ -55,6 +55,8 @@ private:
     bool writeHeader(QTextStream& stream);
     void writeData(QTextStream& stream, const RecordData& data);
     void writeFooter(QTextStream& stream);
+    QString getTriangleAnomalyTypeString(TriangleAnomalyType type);  // 新增辅助函数
+
 };
 
 #endif

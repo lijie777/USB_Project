@@ -34,6 +34,7 @@
 #include "USBDebugHelper.h"
 #include "USBReaderThread.h"
 #include "qcustomplot.h"
+#include "OptimizedTriangleAnomalyDetector.h"
 
 // 主窗口类
 class USBVisualizerMainWindow : public QMainWindow
@@ -72,25 +73,27 @@ private:
     void updateDeviceCombo();
     void processDataBuffer();
 
+    void setupTriangleDetector();        // 改为三角波检测器设置
 
-    void setupSawtoothDetector();
-
-    void createSawtoothDebugMenu();
+    void createTriangleDebugMenu();      // 改为三角波调试菜单
 
     // 辅助函数
     void updateRecordingUI(bool isRecording);
-    QString getAnomalyTypeString(SawtoothAnomalyType type);
+    QString getAnomalyTypeString(TriangleAnomalyType type);  // 改为三角波异常类型
+    void resetTriangleDetector();        // 改为三角波检测器重置
 
-    void resetSawtoolDetector();
 private slots:
-    void onSawtoothAnomalyDetected(const SawtoothAnomalyResult& anomaly);
-    void onSawtoothStatsUpdated(const SawtoothStats& stats);
-    void onRecordingStarted(const SawtoothAnomalyResult& trigger);
+    void onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly);   // 改为三角波异常
+    void onTriangleStatsUpdated(const TriangleStats& stats);                // 改为三角波统计
+    void onTriangleLearningProgress(int progress, int total);               // 新增：学习进度
+    void onTriangleLearningCompleted(const TriangleStats& learnedStats);    // 新增：学习完成
+    void onRecordingStarted(const TriangleAnomalyResult& trigger);          // 改为三角波异常结果
+
     void onRecordingData(uint16_t value, qint64 timestamp);
     void onRecordingStopped(int totalDataPoints);
 
-    void showSawtoothDebugInfo();
-    void fineTuneSawtoothDetector();
+    void showTriangleDebugInfo();       // 改为三角波调试信息
+    void finetuneTriangleDetector();    // 改为三角波参数微调
 
     // 异常记录线程相关槽函数
     void onRecorderThreadFinished(int totalPoints, const QString& filename);
@@ -98,11 +101,11 @@ private slots:
 
 private:
     // 异常记录相关
-    OptimizedSawtoothAnomalyDetector* m_sawtoothDetector;
-    AnomalyRecorderThread* m_recorderThread;              // 记录线程
-    SawtoothAnomalyResult m_currentAnomalyTrigger;       // 当前触发的异常
-    qint64 m_recordingStartTime;                          // 记录开始时间
-    QString m_anomalyRecordFileName;                      // 异常记录文件名
+    OptimizedTriangleAnomalyDetector* m_triangleDetector;        // 改为三角波检测器
+    AnomalyRecorderThread* m_recorderThread;                     // 记录线程
+    TriangleAnomalyResult m_currentAnomalyTrigger;              // 改为三角波异常结果
+    qint64 m_recordingStartTime;                                 // 记录开始时间
+    QString m_anomalyRecordFileName;                             // 异常记录文件名
 
     // UI组件
     QWidget* m_centralWidget;
@@ -135,7 +138,8 @@ private:
     QLabel* m_bufferUsageLabel;
 
     //锯齿波状态
-    QLabel *m_statusLabelExp;
+    QLabel *m_triangleStatusLabel;
+    QLabel* m_learningProgressLabel;
 
     // 图表
     QGroupBox* m_plotGroup;
