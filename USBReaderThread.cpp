@@ -6,10 +6,10 @@
 #define CHUNKSIZE 4*1024  //接收的缓存
 #define TIMEOUT 10         //接收数据的超时时间
 
-#define SLEEPTIME 800     //线程睡眠时间(ms)
+#define SLEEPTIME 1000     //线程睡眠时间(ms)
 
 // 每次读取4096个字节，每次睡眠时间为800，传输速率大概为5KB/s
-
+// 每次读取4096个字节，每次睡眠时间为1000，传输速率大概为4KB/s
 
 // USB读取线程实现
 USBReaderThread::USBReaderThread(QObject* parent)
@@ -222,14 +222,14 @@ void USBReaderThread::run()
             }
         }
 
-        qint64 currentTime2 = QDateTime::currentMSecsSinceEpoch();
+//        qint64 currentTime2 = QDateTime::currentMSecsSinceEpoch();
 
-        qDebug()<< "接收一次数据的间隔时间(秒)："<< (currentTime2 - m_lastStatTime2) / 1000;
+//        qDebug()<< "接收一次数据的间隔时间(秒)："<< (currentTime2 - m_lastStatTime2) / 1000;
 
         // 短暂休眠以避免100%CPU使用
         msleep(SLEEPTIME);
 
-        m_lastStatTime2 = currentTime2;
+//        m_lastStatTime2 = currentTime2;
     }
 
     qDebug() << "=== USB读取线程结束 ===";

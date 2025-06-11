@@ -1,6 +1,9 @@
 // AnomalyRecorderThread.cpp
 #include "AnomalyRecorderThread.h"
 
+
+#define RECORED_POINTS 20000 //两万个点，大概10秒的数据，因为一秒大概2048个数据
+
 AnomalyRecorderThread::AnomalyRecorderThread(QObject *parent)
     : QThread(parent)
     , m_stopRequested(false)
@@ -56,12 +59,16 @@ void AnomalyRecorderThread::addData(uint16_t value, qint64 timestamp)
     data.index = m_totalRecorded + m_dataQueue.size() + 1;
 
     m_dataQueue.enqueue(data);
-    m_dataAvailable.wakeOne();
+    //如果当前队列以及超过10000个数据，那么记录
+    if (m_dataQueue.size() > RECORED_POINTS)
+    {
+        m_dataAvailable.wakeOne();
+    }
 }
 
 void AnomalyRecorderThread::run()
 {
-    LOG_INFO("异常记录线程启动: {}", m_filename);
+    LOG_INFO_CL("异常记录线程启动: {}", m_filename);
 
     QFile file(m_filename);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -89,7 +96,7 @@ void AnomalyRecorderThread::run()
 
         // 批量处理数据
         QList<RecordData> batch;
-        int batchSize = qMin(1000, m_dataQueue.size());  // 每次最多处理1000个
+        int batchSize = qMin(RECORED_POINTS, m_dataQueue.size());  // 每次最多处理10000个
 
         for (int i = 0; i < batchSize; ++i) {
             batch.append(m_dataQueue.dequeue());
@@ -106,7 +113,7 @@ void AnomalyRecorderThread::run()
         // 定期刷新
         if (m_totalRecorded % 1000 == 0) {
             stream.flush();
-            LOG_DEBUG("已记录 {} 个数据点", m_totalRecorded.load());
+            LOG_DEBUG_CL("已记录 {} 个数据点", m_totalRecorded.load());
         }
     }
 
@@ -203,33 +210,17 @@ void AnomalyRecorderThread::writeFooter(QTextStream& stream)
 // 新增：三角波异常类型转换函数
 QString AnomalyRecorderThread::getTriangleAnomalyTypeString(TriangleAnomalyType type)
 {
-    switch (type) {
-        case TriangleAnomalyType::FrequencyDrift:
-            return "频率漂移";
-        case TriangleAnomalyType::AmplitudeDrift:
-            return "幅度异常";
-        case TriangleAnomalyType::RisingSlopeError:
+    switch (type) {      
+        case TriangleAnomalyType::RisingSlopeAnomaly:
             return "上升沿斜率异常";
-        case TriangleAnomalyType::FallingSlopeError:
+        case TriangleAnomalyType::FallingSlopeAnomaly:
             return "下降沿斜率异常";
-        case TriangleAnomalyType::AsymmetryError:
-            return "非对称比例异常";
-        case TriangleAnomalyType::PeakValueError:
+        case TriangleAnomalyType::PeakValueAnomaly:
             return "波峰值异常";
-        case TriangleAnomalyType::ValleyValueError:
+        case TriangleAnomalyType::ValleyValueAnomaly:
             return "波谷值异常";
-        case TriangleAnomalyType::PeriodDistortion:
-            return "周期失真";
-        case TriangleAnomalyType::LinearityError:
-            return "线性度异常";
-        case TriangleAnomalyType::NoiseSpike:
-            return "噪声尖峰";
-        case TriangleAnomalyType::PhaseJump:
-            return "相位跳跃";
-        case TriangleAnomalyType::Saturation:
-            return "信号饱和";
-        case TriangleAnomalyType::Dropout:
-            return "信号丢失";
+        case TriangleAnomalyType::PeriodAnomaly:
+            return "周期异常";
         default:
             return "未知异常";
     }
