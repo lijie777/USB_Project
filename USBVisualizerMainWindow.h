@@ -2,6 +2,7 @@
 #ifndef USBVISUALIZERMAINWINDOW_H
 #define USBVISUALIZERMAINWINDOW_H
 
+#include <QCheckBox>
 #include <libusb-1.0/libusb.h>
 #include <QCheckBox>
 #include <QComboBox>
@@ -98,6 +99,30 @@ private slots:
     void onRecorderThreadFinished(int totalPoints, const QString& filename);
     void onRecorderThreadError(const QString& error);
 
+// 抽取倍数新增代码
+private:
+    // 数据抽取相关
+    QSpinBox* m_dataDecimationSpin;           // 数据抽取倍数输入框
+    QPushButton* m_applyDecimationBtn;        // 应用抽取设置按钮
+    int m_decimationFactor;                   // 当前抽取倍数
+
+    // 数据处理缓冲区
+    int m_decimationCounter;                  // 抽取计数器
+    uint64_t m_decimationSum;                 // 累加和
+
+    // 方法声明
+    void processDecimatedData(uint16_t averageValue);
+    void updateDecimationSettings();
+
+private:
+    // 线程睡眠配置
+    QSpinBox* m_sleepTimeSpin;               // 睡眠时间输入框
+    QPushButton* m_applyThreadConfigBtn;     // 应用按钮
+
+private slots:
+    void applySleepTimeConfig();             // 应用睡眠时间配置
+    void onDebugPrintToggled(bool enabled);
+
 private:
     // 异常记录相关
     OptimizedTriangleAnomalyDetector* m_triangleDetector;        // 三角波检测器
@@ -171,11 +196,18 @@ private:
 
     // 性能统计
     quint64 m_currentDataRate;
-    quint32 m_currentSampleRate;
+    quint32 m_currentSampleRate; //每秒采样点数
 
     // 环形缓冲区相关
     int m_ringBufferWritePos{0};    // 环形缓冲区写入位置
     bool m_ringBufferFull{false};   // 缓冲区是否已满
+
+    QCheckBox *m_debugCheckBox;
+    bool m_isPrintEnabled{false};
+
+    //波峰和波谷
+    qint16 m_peakValue{0};
+    qint16 m_valleyValue{0};
 };
 
 #endif  // USBVISUALIZERMAINWINDOW_H

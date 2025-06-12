@@ -4,6 +4,7 @@
 
 #define ENDPOINT 0X86      //接收端点
 #define CHUNKSIZE 4*1024  //接收的缓存
+#define BASE_CHUNKSIZE (4*1024)     // 基础chunksize: 4KB
 #define TIMEOUT 10         //接收数据的超时时间
 
 #define SLEEPTIME 1000     //线程睡眠时间(ms)
@@ -18,7 +19,9 @@ USBReaderThread::USBReaderThread(QObject* parent)
       m_deviceHandle(nullptr),
       m_stopRequested(false),
       m_endpoint(ENDPOINT),  // 默认输入端点
-      m_chunkSize(CHUNKSIZE),
+      m_chunkSize(BASE_CHUNKSIZE),
+      m_decimationFactor(1),            // 默认抽取倍数1
+      m_baseChunkSize(BASE_CHUNKSIZE),  // 基础chunksize
       m_timeout(TIMEOUT),
       m_bytesReceived(0),
       m_samplesReceived(0),
@@ -126,10 +129,42 @@ void USBReaderThread::stopReading()
     wait(3000);  // 等待最多3秒
 }
 
+// 新增：设置抽取倍数并自动调整chunksize
+void USBReaderThread::setDecimationFactor(int decimationFactor)
+{
+    if (m_decimationFactor == decimationFactor) {
+        return; // 没有变化
+    }
+
+    int oldChunkSize = m_chunkSize;
+    m_decimationFactor = decimationFactor;
+
+    // 计算新的chunksize
+    m_chunkSize = m_baseChunkSize * m_decimationFactor;
+
+    qDebug() << QString("USB接收线程: 抽取倍数 %1 → %2, ChunkSize %3KB → %4KB")
+               .arg(m_decimationFactor == decimationFactor ? m_decimationFactor : m_decimationFactor)
+               .arg(decimationFactor)
+               .arg(oldChunkSize / 1024)
+               .arg(m_chunkSize / 1024);
+
+    // 如果线程正在运行，需要在下次循环时生效
+    // USB传输会在下次调用libusb_bulk_transfer时使用新的chunksize
+}
+
+void USBReaderThread::setSleepFactor(int sleepFactor)
+{
+    m_sleepFactor = sleepFactor;
+}
+
 void USBReaderThread::run()
 {
     qDebug() << "=== USB读取线程开始 ===";
-    qDebug() << QString("配置: 端点=0x%1, 块大小=%2, 超时=%3ms").arg(m_endpoint, 2, 16, QChar('0')).arg(m_chunkSize).arg(m_timeout);
+    qDebug() << QString("配置: 端点=0x%1, 块大小=%2KB, 超时=%3ms, 抽取倍数=%4")
+                   .arg(m_endpoint, 2, 16, QChar('0'))
+                   .arg(m_chunkSize / 1024)
+                   .arg(m_timeout)
+                   .arg(m_decimationFactor);
 
     m_stopRequested = false;
     m_bytesReceived = 0;
@@ -137,18 +172,31 @@ void USBReaderThread::run()
     m_lastStatTime = QDateTime::currentMSecsSinceEpoch();
 
     QByteArray buffer;
-    buffer.resize(m_chunkSize);
+//    buffer.resize(m_chunkSize);
 
     int consecutiveTimeouts = 0;
     int maxConsecutiveTimeouts = 10;  // 连续超时限制
 
     while (!m_stopRequested) {
+
+        // 每次循环都检查chunksize是否需要调整缓冲区
+        if (buffer.size() != m_chunkSize) {
+            buffer.resize(m_chunkSize);
+            qDebug() << QString("调整USB接收缓冲区大小: %1KB").arg(m_chunkSize / 1024);
+        }
+
         int actualLength = 0;
 
-        // 从USB设备读取数据
-        int result =
-            libusb_bulk_transfer(m_deviceHandle, m_endpoint, reinterpret_cast<unsigned char*>(buffer.data()),
-                                 m_chunkSize, &actualLength, m_timeout);
+        // 从USB设备读取数据，使用当前的chunksize进行USB传输
+        int result = libusb_bulk_transfer(
+            m_deviceHandle,
+            m_endpoint,
+            reinterpret_cast<unsigned char*>(buffer.data()),
+            m_chunkSize,        // 使用动态调整的chunksize
+            &actualLength,
+            m_timeout
+        );
+
 
         if (result == LIBUSB_SUCCESS && actualLength > 0) {
             // 重置超时计数器
@@ -162,7 +210,12 @@ void USBReaderThread::run()
             QByteArray receivedData = buffer.left(actualLength);
             emit dataReceived(receivedData);
 
-            qDebug() << "=====================接收到一次数据==========================";
+            qDebug() << QString("接收到一次数据: %1KB (ChunkSize: %2KB, 抽取倍数: %3, chunksize: %4, actualLength: %5)")
+                                   .arg(actualLength / 1024.0, 0, 'f', 1)
+                                   .arg(m_chunkSize / 1024)
+                                   .arg(m_decimationFactor)
+                                   .arg(m_chunkSize)
+                                   .arg(actualLength);
 
             // 更新性能统计（每秒一次）
             qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
@@ -227,7 +280,7 @@ void USBReaderThread::run()
 //        qDebug()<< "接收一次数据的间隔时间(秒)："<< (currentTime2 - m_lastStatTime2) / 1000;
 
         // 短暂休眠以避免100%CPU使用
-        msleep(SLEEPTIME);
+        msleep(m_sleepFactor);
 
 //        m_lastStatTime2 = currentTime2;
     }

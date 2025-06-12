@@ -373,7 +373,7 @@ void OptimizedTriangleAnomalyDetector::updateLearningData()
 {
     if (!m_currentCycle.isValid) {
         m_totalAttemptedCycles++;
-        LOG_DEBUG_CL("无效周期 #{}, 总尝试次数: {}", m_totalAttemptedCycles, m_totalAttemptedCycles);
+//        LOG_DEBUG_CL("无效周期 #{}, 总尝试次数: {}", m_totalAttemptedCycles, m_totalAttemptedCycles);
         return;
     }
 

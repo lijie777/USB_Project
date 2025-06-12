@@ -48,6 +48,10 @@ public:
     void setChunkSize(int size) { m_chunkSize = size; }
     void setTimeout(int timeout) { m_timeout = timeout; }
 
+    // 新增：动态设置基于抽取倍数的chunksize
+    void setDecimationFactor(int decimationFactor);
+    void setSleepFactor(int sleepFactor);
+
 protected:
     void run() override;
 
@@ -64,8 +68,11 @@ private:
     uint8_t m_endpoint;
     int m_chunkSize;
     int m_timeout;
+    // 新增：抽取相关参数
+    int m_decimationFactor;         // 抽取倍数
+    int m_baseChunkSize;           // 基础chunksize (4*1024)
 
-    int m_sleepMs;
+    int m_sleepFactor{1000};// ms
     // 性能统计
     quint64 m_bytesReceived;
     quint32 m_samplesReceived;
