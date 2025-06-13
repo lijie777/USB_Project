@@ -210,6 +210,7 @@ void USBReaderThread::run()
             QByteArray receivedData = buffer.left(actualLength);
             emit dataReceived(receivedData);
 
+            qDebug()<<" ";
             qDebug() << QString("接收到一次数据: %1KB (ChunkSize: %2KB, 抽取倍数: %3, chunksize: %4, actualLength: %5)")
                                    .arg(actualLength / 1024.0, 0, 'f', 1)
                                    .arg(m_chunkSize / 1024)

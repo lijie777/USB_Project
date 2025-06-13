@@ -49,7 +49,8 @@ public:
     void setTimeout(int timeout) { m_timeout = timeout; }
 
     // 新增：动态设置基于抽取倍数的chunksize
-    void setDecimationFactor(int decimationFactor);
+    void setDecimationFactor(int decimationFactor);//暂时弃用
+
     void setSleepFactor(int sleepFactor);
 
 protected:

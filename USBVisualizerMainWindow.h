@@ -93,22 +93,37 @@ private slots:
     void onRecordingStopped(int totalDataPoints);
 
     void showTriangleDebugInfo();       // 调试信息
-    void finetuneTriangleDetector();    // 参数微调
 
     // 异常记录线程相关槽函数
     void onRecorderThreadFinished(int totalPoints, const QString& filename);
     void onRecorderThreadError(const QString& error);
 
+signals:
+    //当满足一个周期数据时发送数据
+    void periodicSignal();
 // 抽取倍数新增代码
 private:
     // 数据抽取相关
     QSpinBox* m_dataDecimationSpin;           // 数据抽取倍数输入框
     QPushButton* m_applyDecimationBtn;        // 应用抽取设置按钮
     int m_decimationFactor;                   // 当前抽取倍数
-
+    QSpinBox *m_deltaValueSpin;               //点差值
     // 数据处理缓冲区
     int m_decimationCounter;                  // 抽取计数器
     uint64_t m_decimationSum;                 // 累加和
+
+    //数据读取一次的大小
+    QSpinBox *m_bufferReadSpin;
+
+    QSpinBox *m_timerPaintEnginSpin;               //绘制定时器
+    QPushButton *m_applytimerPaintEnginBtn;
+    int m_timerPaintEnginValue;                   //绘制定时器间隔
+
+    QPushButton *m_applyDeltaBtn;
+    QPushButton *m_applyBufferReadBtn;
+
+    int m_deltaValue;//点差值
+    int m_bufferReadValue;//数据读取缓冲区大小
 
     // 方法声明
     void processDecimatedData(uint16_t averageValue);
@@ -208,6 +223,12 @@ private:
     //波峰和波谷
     qint16 m_peakValue{0};
     qint16 m_valleyValue{0};
+    uint16_t m_lastValue{0};
+    uint16_t m_lastValue2{0};
+
+    // 取固定的点做计算，算出波峰，波谷，和上升斜率和下降斜率，及周期
+    QList<uint16_t> m_baseCalcPointsList;
+
 };
 
 #endif  // USBVISUALIZERMAINWINDOW_H

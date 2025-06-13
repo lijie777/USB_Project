@@ -172,7 +172,7 @@ void USBVisualizerMainWindow::setupUI()
 
     // 数据采集控制
     m_dataGroup = new QGroupBox("数据采集", this);
-    m_dataGroup->setFixedHeight(GROUPHEIGHT);
+    m_dataGroup->setFixedHeight(GROUPHEIGHT + 30);
     controlGridLayout->addWidget(m_dataGroup, 0, 1);
 
     QVBoxLayout* dataLayout = new QVBoxLayout(m_dataGroup);
@@ -196,7 +196,7 @@ void USBVisualizerMainWindow::setupUI()
 
     // 图表配置
     m_configGroup = new QGroupBox("图表配置", this);
-    m_configGroup->setFixedHeight(GROUPHEIGHT+25);
+    m_configGroup->setFixedHeight(GROUPHEIGHT+30);
     controlGridLayout->addWidget(m_configGroup, 0, 2);
 
     QVBoxLayout* configLayout = new QVBoxLayout(m_configGroup);
@@ -251,7 +251,7 @@ void USBVisualizerMainWindow::setupUI()
     m_bufferUsageLabel = new QLabel("缓冲区: 0%");
 
     // 三角波检测状态信息组 - 主要状态
-    QGroupBox* triangleMainGroup = new QGroupBox("三角波检测", this);
+    QGroupBox* triangleMainGroup = new QGroupBox("三角波参数学习", this);
     triangleMainGroup->setFixedHeight(GROUPHEIGHT);
     controlGridLayout->addWidget(triangleMainGroup, 0, 4);
 
@@ -260,7 +260,7 @@ void USBVisualizerMainWindow::setupUI()
     m_triangleStatusLabel = new QLabel();
     m_triangleStatusLabel->setWordWrap(true);
     m_triangleStatusLabel->setFixedWidth(140);
-
+m_triangleStatusLabel->setText("asldfkijasldkfasldk");
     m_learningProgressLabel = new QLabel("学习进度: 等待数据...");
     m_learningProgressLabel->setWordWrap(true);
 
@@ -331,16 +331,25 @@ void USBVisualizerMainWindow::setupUI()
     m_dataDecimationSpin = new QSpinBox(this);
     m_dataDecimationSpin->setRange(1, 100000);
     m_dataDecimationSpin->setValue(1);  // 默认不抽取
-    m_dataDecimationSpin->setToolTip("最大值100000");
-    m_dataDecimationSpin->setMaximumWidth(80);
-    m_dataDecimationSpin->setToolTip("连续N个点的平均值作为一个点显示");
+    m_dataDecimationSpin->setMaximumWidth(50);
+    m_dataDecimationSpin->setToolTip("连续N个点的平均值作为一个点显示(最大值100000)");
     decimationLayout->addWidget(m_dataDecimationSpin);
-
-    decimationLayout->addWidget(new QLabel("点平均"));
 
     m_applyDecimationBtn = new QPushButton("应用", this);
     m_applyDecimationBtn->setMaximumWidth(60);
     decimationLayout->addWidget(m_applyDecimationBtn);
+
+    decimationLayout->addWidget(new QLabel("点差值"));
+    //当前点和上个点的差值
+    m_deltaValueSpin = new QSpinBox(this);
+    m_deltaValueSpin->setRange(1, 100000);
+    m_deltaValueSpin->setValue(3);  // 默认不做差值
+    m_deltaValueSpin->setMaximumWidth(50);
+    decimationLayout->addWidget(m_deltaValueSpin);
+
+    m_applyDeltaBtn = new QPushButton("应用", this);
+    m_applyDeltaBtn->setMaximumWidth(60);
+    decimationLayout->addWidget(m_applyDeltaBtn);
 
     decimationLayout->addStretch();
     configLayout->addLayout(decimationLayout);
@@ -350,7 +359,7 @@ void USBVisualizerMainWindow::setupUI()
 
     m_sleepTimeSpin = new QSpinBox(this);
     m_sleepTimeSpin->setRange(10, 100000);     // 10ms到5000ms
-    m_sleepTimeSpin->setValue(1000);         // 默认1000ms
+    m_sleepTimeSpin->setValue(100);         // 默认1000ms
     m_sleepTimeSpin->setToolTip("最大值100000");
     m_sleepTimeSpin->setSuffix(" ms");
     m_sleepTimeSpin->setMaximumWidth(100);
@@ -370,6 +379,40 @@ void USBVisualizerMainWindow::setupUI()
     sleepLayout->addWidget(m_debugCheckBox);
     sleepLayout->addStretch();
 
+    QHBoxLayout* bufferReadLayout = new QHBoxLayout();
+    bufferReadLayout->addWidget(new QLabel("一次读取数据大小(默认4096字节):"));
+
+    m_bufferReadSpin = new QSpinBox(this);
+    m_bufferReadSpin->setRange(1024, 1024*1024*10);     // 10ms到5000ms
+    m_bufferReadSpin->setValue(4096);         // 默认1000ms
+    m_bufferReadSpin->setToolTip("最大值1020*1024*10");
+    m_bufferReadSpin->setMaximumWidth(100);
+    bufferReadLayout->addWidget(m_bufferReadSpin);
+
+    m_applyBufferReadBtn = new QPushButton("应用", this);
+    m_applyBufferReadBtn->setMaximumWidth(60);
+    bufferReadLayout->addWidget(m_applyBufferReadBtn);
+
+    bufferReadLayout->addStretch();
+    dataLayout->addLayout(bufferReadLayout);
+
+
+    QHBoxLayout* timerLayout = new QHBoxLayout();
+    timerLayout->addWidget(new QLabel("渲染定时器间隔(ms):"));
+
+    m_timerPaintEnginSpin = new QSpinBox(this);
+    m_timerPaintEnginSpin->setRange(1, 10000);
+    m_timerPaintEnginSpin->setValue(10);
+    m_timerPaintEnginSpin->setMaximumWidth(100);
+    timerLayout->addWidget(m_timerPaintEnginSpin);
+
+    m_applytimerPaintEnginBtn = new QPushButton("应用", this);
+    m_applytimerPaintEnginBtn->setMaximumWidth(60);
+    timerLayout->addWidget(m_applytimerPaintEnginBtn);
+
+    timerLayout->addStretch();
+    dataLayout->addLayout(timerLayout);
+
     // 连接信号槽
     connect(m_refreshBtn, &QPushButton::clicked, this, &USBVisualizerMainWindow::refreshDevices);
     connect(m_connectBtn, &QPushButton::clicked, this, &USBVisualizerMainWindow::connectDevice);
@@ -381,6 +424,23 @@ void USBVisualizerMainWindow::setupUI()
     connect(m_applyDecimationBtn, &QPushButton::clicked, this, &USBVisualizerMainWindow::updateDecimationSettings);
     connect(m_applyThreadConfigBtn, &QPushButton::clicked, this, &USBVisualizerMainWindow::applySleepTimeConfig);
     connect(m_debugCheckBox, &QCheckBox::toggled, this, &USBVisualizerMainWindow::onDebugPrintToggled);
+
+    connect(m_applyDeltaBtn, &QPushButton::clicked, [this](){m_deltaValue = m_deltaValueSpin->value();});
+
+    connect(m_applyBufferReadBtn, &QPushButton::clicked, [this](){
+        m_bufferReadValue = m_bufferReadSpin->value();
+        // 检查是否有USB线程在运行
+        if (!m_readerThread || !m_deviceConnected) {
+            QMessageBox::warning(this, "警告", "请先连接USB设备");
+            return;
+        }
+        m_readerThread->setChunkSize(m_bufferReadValue);
+    });
+
+    connect(m_applytimerPaintEnginBtn, &QPushButton::clicked, [this](){
+        m_timerPaintEnginValue = m_timerPaintEnginSpin->value();
+    });
+
 
     qDebug() << "UI界面创建完成";
 
@@ -610,9 +670,14 @@ void USBVisualizerMainWindow::connectDevice()
 
         m_statusLabel->setText("状态: 已连接 - " + deviceInfo.description);
 
+
         m_decimationFactor = m_dataDecimationSpin->value();
+        m_deltaValue = m_deltaValueSpin->value();
+        m_bufferReadValue = m_bufferReadSpin->value();
+        m_timerPaintEnginValue = m_timerPaintEnginSpin->value();
         // 设置初始抽取倍数
-        m_readerThread->setDecimationFactor(m_decimationFactor);
+//        m_readerThread->setDecimationFactor(m_decimationFactor);//暂时弃用
+        m_readerThread->setChunkSize(m_bufferReadValue);
         m_readerThread->setSleepFactor(m_sleepTimeSpin->value());
 
         QMessageBox::information(this, "成功", "USB设备连接成功");
@@ -701,9 +766,6 @@ void USBVisualizerMainWindow::stopDataCollection()
     }
 }
 
-
-
-
 void USBVisualizerMainWindow::clearData()
 {
     qDebug() << "清空数据缓冲区";
@@ -746,9 +808,6 @@ void USBVisualizerMainWindow::clearData()
     m_sampleCountLabel->setText("采样数: 0");
     m_bufferUsageLabel->setText("缓冲区: 0%");
 }
-
-
-
 
 
 void USBVisualizerMainWindow::updatePlotSettings()
@@ -828,6 +887,7 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
     static qint64 pointsNum = 0;
     // 批量处理，减少函数调用开销
     const uint8_t* rawData = reinterpret_cast<const uint8_t*>(data.constData());
+
     // 将接收到的字节数据转换为uint16_t值
     for (int i = 0; i < data.size() - 1; i += 2) {
 
@@ -836,16 +896,34 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
 
         uint16_t value = rawValue & 0x0FFF;
 
-        if (m_decimationFactor == 1) {
-             //三角波检测
-             m_triangleDetector->feedData(value);
+        //首先过滤差值不符合要求的数据
+        if (std::abs(m_lastValue2 - value) < m_deltaValue)
+        {
+            continue;
+        }
 
-             // 无抽取，直接处理
-             m_dataBuffer.enqueue(value);
-             if (m_isPrintEnabled)
+        if (m_decimationFactor == 1)
+        {
+             //TODO:根据测试发现1500已结构成了一个周期，所以目前只取1500个点，后期要设置成动态设置的
+             if (m_baseCalcPointsList.size() < 1500)
              {
-                 pointsNum++;
-                 qDebug()<<"一次读取数据的点数（无数据抽取）："<<pointsNum << "值："<< value;
+                 m_baseCalcPointsList.append(value);
+                 //发送信号出去计算波峰，波谷，和上升斜率和下降斜率，及周期
+                 //学习中...
+                 continue;
+             }
+             else{
+                 //三角波检测
+                 m_triangleDetector->feedData(value);
+
+                 // 无抽取，直接处理
+                 m_dataBuffer.enqueue(value);
+
+                 if (m_isPrintEnabled)
+                 {
+                     pointsNum++;
+                     qDebug()<<"一次读取数据的点数（无数据抽取）："<<pointsNum << "值："<< value;
+                 }
              }
 
          } else {
@@ -853,15 +931,19 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
              m_decimationSum += value;
              m_decimationCounter++;
 
-             if (m_decimationCounter >= m_decimationFactor) {
+             if (m_decimationCounter >= m_decimationFactor)
+             {
                  // 计算平均值
 //                 uint16_t averageValue = static_cast<uint16_t>(m_decimationSum / m_decimationFactor);
                  uint16_t averageValue = value;
 
+                 //过滤一样的数据
+                 if (m_lastValue == averageValue)
+                     continue;
+
                  //三角波检测
                  m_triangleDetector->feedData(value);
-                 // 处理抽取后的数据
-//                   processDecimatedData(averageValue);
+
                  m_dataBuffer.enqueue(averageValue);
                  // 重置计数器
                  m_decimationCounter = 0;
@@ -872,20 +954,22 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
                      pointsNum++;
                      qDebug()<<"一次读取数据的点数（有数据抽取）："<<pointsNum << "值："<< value;
                  }
+                m_lastValue = value;
              }
          }
+         m_lastValue2 = value;
     }
     pointsNum = 0;
 
     qint64 elapsed = timer.elapsed();
 
-    qDebug()<< "onDataReceived triggered, m_dataBuffer size:" << m_dataBuffer.size()
-            <<"=========Function execution time:"<<elapsed;
+    qDebug()<< "onDataReceived triggered, m_dataBuffer size:" << m_dataBuffer.size() <<"  Function execution time:"<<elapsed;
 
     //TODO:缓存区有数据了以后就开始绘图，保证绘图的时间小于数据接收一次的时间
     if (!m_plotUpdateTimer->isActive())
     {
-        m_plotUpdateTimer->start(10);
+        m_plotUpdateTimer->start(m_timerPaintEnginValue);
+        qDebug()<<"已启动渲染定时器，开始绘制...";
     }
     else{
         qDebug()<<"m_plotUpdateTimer is Active ";
@@ -985,7 +1069,6 @@ void USBVisualizerMainWindow::onStatisticsUpdated(quint64 bytesPerSecond, quint3
     QMetaObject::invokeMethod(this, "updateStatusLabels", Qt::QueuedConnection);
 }
 
-
 void USBVisualizerMainWindow::updateStatusLabels()
 {
     double dataRateKB = m_currentDataRate / 1024.0;
@@ -1015,8 +1098,6 @@ void USBVisualizerMainWindow::updateStatusLabels()
 
 }
 
-
-
 void USBVisualizerMainWindow::updatePlot()
 {
     QElapsedTimer timer;
@@ -1035,7 +1116,8 @@ void USBVisualizerMainWindow::updatePlot()
     // 检查是否有新数据
     static int lastSampleCount = 0;
     if (m_sampleCounter == lastSampleCount) {
-        qDebug()<<"数据已被处理完，暂时没有新数据";
+        qDebug()<<"数据已被处理完，暂时没有新数据，即将停止定时器...";
+        m_plotUpdateTimer->stop();
         return;  // 没有新数据
     }
     lastSampleCount = m_sampleCounter;
@@ -1107,11 +1189,8 @@ void USBVisualizerMainWindow::updatePlot()
         m_customPlot->yAxis->setRange(m_yMinSpin->value(), m_yMaxSpin->value());
     }
 
-
     // 重绘图表
     m_customPlot->replot();
-
-    qDebug() << "updatePlot triggered, m_dataBuffer size:：" << m_dataBuffer.size();
 
     qint64 elapsed = timer.elapsed();
 
@@ -1120,9 +1199,9 @@ void USBVisualizerMainWindow::updatePlot()
     {
          qDebug() << "updatePlot Function execution time:"<< elapsed;
     }
+
+    qDebug() << "updatePlot triggered ended, m_dataBuffer size:" << m_dataBuffer.size();
 }
-
-
 
 void USBVisualizerMainWindow::processDataBuffer()
 {
@@ -1132,9 +1211,8 @@ void USBVisualizerMainWindow::processDataBuffer()
     QMutexLocker locker(&m_dataMutex);
 
     // 确保缓冲区已初始化到正确大小
-    if (m_plotDataX.size() != m_maxBufferSize || m_plotDataY.size() != m_maxBufferSize) {
-
-
+    if (m_plotDataX.size() != m_maxBufferSize || m_plotDataY.size() != m_maxBufferSize)
+    {
         m_plotDataX.clear();
         m_plotDataY.clear();
 
@@ -1154,11 +1232,6 @@ void USBVisualizerMainWindow::processDataBuffer()
 
     // 批量处理缓冲区中的数据
     int processCount = qMin(300, m_dataBuffer.size());
-    if (processCount < 300)
-    {
-        //当处理最后的一批数据时停止定时器
-        m_plotUpdateTimer->stop();
-    }
 
     if (processCount == 0) {
         return;  // 没有数据需要处理
@@ -1186,15 +1259,12 @@ void USBVisualizerMainWindow::processDataBuffer()
 
     qint64 elapsed = timer.elapsed();
 
-    // 只在处理了数据时输出调试信息
-//    static int debugCounter = 0;
-//    if (++debugCounter % 20 == 0 || elapsed > 10) {
-//        qDebug() << QString("环形缓冲区状态: 处理%1个, 剩余%2个, 写入位置%3, 已满%4, 耗时%5ms")
-//                   .arg(processCount)
-//                   .arg(m_dataBuffer.size())
-//                   .arg(m_ringBufferWritePos)
-//                   .arg(m_ringBufferFull ? "是" : "否")
-//                   .arg(elapsed);
+
+//    //当处理最后的一批数据时停止定时器
+//    if (m_dataBuffer.isEmpty())
+//    {
+//        m_plotUpdateTimer->stop();
+//        qDebug()<<"渲染定时器已停止，等待下一次数据处理...";
 //    }
 }
 
@@ -1429,44 +1499,6 @@ void USBVisualizerMainWindow::showTriangleDebugInfo()
 
         QMessageBox::information(this, "三角波检测调试信息", debugInfo);
 }
-
-// 参数微调
-void USBVisualizerMainWindow::finetuneTriangleDetector()
-{
-    if (!m_triangleDetector) return;
-
-        TriangleStats stats = m_triangleDetector->getCurrentStats();
-
-        // 如果学习尚未完成，不进行微调
-        if (stats.isLearning) {
-            QMessageBox::information(this, "参数微调", "学习阶段尚未完成，无法进行参数微调。");
-            return;
-        }
-
-        // 简单的参数建议
-        QString suggestions = "基于当前统计数据的建议:\n\n";
-
-        if (stats.baselineFrequency > 0) {
-            suggestions += QString("• 基准频率: %1 Hz\n").arg(stats.baselineFrequency, 0, 'f', 3);
-        }
-
-        if (stats.completedCycles >= TRIANGLE_MIN_VALID_CYCLES_FOR_LEARNING) {
-            suggestions += QString("• 学习质量: 良好 (%1 个有效周期)\n").arg(stats.completedCycles);
-        } else {
-            suggestions += QString("• 学习质量: 需要更多数据 (仅 %1 个周期)\n").arg(stats.completedCycles);
-        }
-
-        if (stats.noiseLevel < TRIANGLE_MAX_NOISE_LEVEL / 2) {
-            suggestions += "• 信号质量: 优秀\n";
-        } else if (stats.noiseLevel < TRIANGLE_MAX_NOISE_LEVEL) {
-            suggestions += "• 信号质量: 良好\n";
-        } else {
-            suggestions += "• 信号质量: 需要改善\n";
-        }
-
-        QMessageBox::information(this, "参数分析", suggestions);
-}
-
 
 void USBVisualizerMainWindow::onRecorderThreadFinished(int totalPoints, const QString& filename)
 {
