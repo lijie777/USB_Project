@@ -1,173 +1,61 @@
-// OptimizedTriangleAnomalyDetector.h
-// 简化版三角波异常检测算法 - 只检测斜率、波峰波谷、周期异常
-
 #ifndef OPTIMIZEDTRIANGLEANOMALYDETECTOR_H
 #define OPTIMIZEDTRIANGLEANOMALYDETECTOR_H
 
+#include <QMutex>
 #include <QObject>
 #include <QQueue>
 #include <QTimer>
-#include <QDateTime>
 #include <QDebug>
-#include <deque>
-#include <functional>
+#include <QDateTime>
+#include <algorithm>
+#include <cmath>
 
-// =============================================================================
-// 宏定义区域 - 所有参数都通过宏定义，便于调试和优化
-// =============================================================================
-
-// 4KB/s情况下 一个周期的数据采样大概是1000个，可以参考波形的一个周期的X轴长度
-
-// 采样相关参数
-#define TRIANGLE_SAMPLING_RATE              2048.0      // 采样率(Hz) - 根据USB传输速率计算得出  比如是4KB/s  那么就是 4 * 1024 / 2,因为是两个字节一组数据，所以是2048
-#define TRIANGLE_ANALYSIS_INTERVAL          10           // 数据分析间隔(个数) - 每10个数据点执行一次分析，平衡性能和实时性
-#define TRIANGLE_DATA_BUFFER_SECONDS        3           // 数据缓冲区时长(秒) - 保存3秒的历史数据用于分析
-
-// 学习阶段参数
-#define TRIANGLE_LEARNING_CYCLES            10          // 学习周期数 - 分析前10个完整周期来建立基准参数
-#define TRIANGLE_MIN_SAMPLES_PER_CYCLE      1000          // 每周期最少样本数 - 确保有足够数据点分析一个周期
-#define TRIANGLE_MAX_SAMPLES_PER_CYCLE      1200        // 每周期最多样本数 - 防止异常长周期导致缓冲区溢出
-
-// 相位检测参数
-#define TRIANGLE_PHASE_WINDOW_SIZE          30           // 相位判断窗口大小(个数) - 用30个连续点的趋势判断当前相位
-#define TRIANGLE_SLOPE_THRESHOLD            10.0        // 斜率阈值 - 斜率绝对值小于10认为是峰值/谷值，大于20认为是上升/下降
-#define TRIANGLE_STRONG_SLOPE_THRESHOLD     20.0        // 强斜率阈值 - 明确判断上升/下降阶段的斜率门限
-#define TRIANGLE_PEAK_VALLEY_RATIO          0.9         // 峰值/谷值判断比例 - 超过最大值90%认为接近峰值，低于范围10%认为接近谷值
-
-// 异常检测容差参数
-#define TRIANGLE_RISING_SLOPE_TOLERANCE     0.20        // 上升斜率容差(20%) - 上升斜率偏差超过20%触发异常
-#define TRIANGLE_FALLING_SLOPE_TOLERANCE    0.20        // 下降斜率容差(20%) - 下降斜率偏差超过20%触发异常
-#define TRIANGLE_PEAK_VALUE_TOLERANCE       0.15        // 波峰值容差(15%) - 波峰值偏差超过15%触发异常
-#define TRIANGLE_VALLEY_VALUE_TOLERANCE     0.15        // 波谷值容差(15%) - 波谷值偏差超过15%触发异常
-#define TRIANGLE_PERIOD_TOLERANCE           0.25        // 周期容差(25%) - 周期时长偏差超过25%触发异常
-
-// 异常记录参数
-#define TRIANGLE_RECORDING_DURATION         10          // 异常记录时长(秒) - 检测到异常后记录10秒数据
-#define TRIANGLE_MIN_ANOMALY_SEVERITY       0.3         // 最小异常严重度 - 严重度低于30%不触发记录
-#define TRIANGLE_SEVERE_ANOMALY_THRESHOLD   0.7         // 严重异常阈值 - 严重度超过70%显示警告对话框
-
-// 数据有效性参数
-#define TRIANGLE_MIN_AMPLITUDE              100         // 最小有效幅度 - 小于100的幅度认为信号太弱
-#define TRIANGLE_MAX_NOISE_LEVEL            50.0        // 最大噪声水平 - 噪声超过50认为信号质量差
-#define TRIANGLE_MIN_CYCLE_DURATION_MS      10          // 最短周期时长(毫秒) - 短于10ms的周期认为无效
-#define TRIANGLE_MAX_CYCLE_DURATION_MS      10000       // 最长周期时长(毫秒) - 长于10秒的周期认为无效
-
-// 统计历史长度参数
-#define TRIANGLE_SLOPE_HISTORY_SIZE         20          // 斜率历史记录数 - 保存最近20个周期的斜率用于计算基准
-#define TRIANGLE_PEAK_VALLEY_HISTORY_SIZE   20          // 峰谷历史记录数 - 保存最近20个周期的峰谷值
-#define TRIANGLE_PERIOD_HISTORY_SIZE        20          // 周期历史记录数 - 保存最近20个周期的时长
-
-// 在头文件中添加新的宏定义
-#define TRIANGLE_INITIAL_STABILIZATION_SAMPLES  1000     // 初始稳定期样本数 - 前200个样本用于稳定相位识别
-#define TRIANGLE_MIN_VALID_CYCLES_FOR_LEARNING  10       // 学习阶段最少有效周期数 - 至少5个完整有效周期才开始计算基准
-#define TRIANGLE_CYCLE_VALIDATION_STRICT        true    // 严格周期验证 - 学习阶段使用更严格的周期验证
-#define TRIANGLE_PHASE_CONFIDENCE_THRESHOLD     30       // 相位识别置信度阈值 - 连续3次相同相位才确认
-#define TRIANGLE_INITIAL_RANGE_DETECTION_WINDOW 1000     // 初始范围检测窗口 - 用前100个样本估算数据范围
-
-// =============================================================================
-// 枚举定义 - 简化的异常类型和相位状态
-// =============================================================================
-
-// 简化的三角波异常类型 - 只关注核心参数
-enum class TriangleAnomalyType {
-    None = 0,                   // 无异常
-    RisingSlopeAnomaly,         // 上升斜率异常
-    FallingSlopeAnomaly,        // 下降斜率异常
-    PeakValueAnomaly,           // 波峰值异常
-    ValleyValueAnomaly,         // 波谷值异常
-    DataJumpAnomaly,            // 数据跳变异常（差值在30以上）
-    PeriodAnomaly               // 周期异常
-};
-
-// 三角波相位状态
+// 三角波相位枚举
 enum class TrianglePhase {
-    Rising,                     // 上升阶段
-    Falling,                    // 下降阶段
-    AtPeak,                     // 波峰附近
-    AtValley,                   // 波谷附近
-    Unknown                     // 未知阶段
+    Unknown,
+    Rising,      // 上升阶段
+    Falling,     // 下降阶段
+    AtPeak,      // 波峰
+    AtValley     // 波谷
 };
 
-// =============================================================================
-// 数据结构定义
-// =============================================================================
+// 异常类型枚举
+enum class TriangleAnomalyType {
+    None,
+    RisingSlopeAnomaly,    // 上升斜率异常
+    FallingSlopeAnomaly,   // 下降斜率异常
+    PeakValueAnomaly,      // 波峰值异常
+    ValleyValueAnomaly,    // 波谷值异常
+    PeriodAnomaly          // 周期异常
+};
+
+// 三角波统计信息
+struct TriangleStats {
+    double avgPeakValue{0};        // 平均波峰值
+    double avgValleyValue{0};      // 平均波谷值
+    double avgRisingSlope{0};      // 平均上升斜率
+    double avgFallingSlope{0};     // 平均下降斜率
+    int avgPeriodLength{0};        // 平均周期长度
+    double peakValueStdDev{0};     // 波峰值标准差
+    double valleyValueStdDev{0};   // 波谷值标准差
+    double risingSlopeStdDev{0};   // 上升斜率标准差
+    double fallingSlopeStdDev{0};  // 下降斜率标准差
+    int totalCycles{0};            // 总周期数
+    bool isValid{false};           // 统计信息是否有效
+};
 
 // 异常检测结果
 struct TriangleAnomalyResult {
-    TriangleAnomalyType type;           // 异常类型
-    double severity;                    // 严重程度 0.0-1.0
-    uint16_t triggerValue;              // 触发异常时的数值
-    qint64 timestamp;                   // 异常发生时间戳
-    QString description;                // 异常描述信息
-    TrianglePhase phaseWhenDetected;    // 检测到异常时的相位
-
-    TriangleAnomalyResult() : type(TriangleAnomalyType::None), severity(0.0),
-                             triggerValue(0), timestamp(0), phaseWhenDetected(TrianglePhase::Unknown) {}
+    TriangleAnomalyType type{TriangleAnomalyType::None};
+    double severity{0.0};          // 异常严重程度 (0-1)
+    uint16_t triggerValue{0};      // 触发异常的值
+    qint64 timestamp{0};           // 时间戳
+    TrianglePhase phaseWhenDetected{TrianglePhase::Unknown}; // 检测到异常时的相位
+    QString description;           // 异常描述
+    double expectedValue{0};       // 期望值
+    double actualValue{0};         // 实际值
+    double threshold{0};           // 阈值
 };
-
-struct BaseLineTriangleInfo
-{
-    double baselineRisingSlope;         // 基准上升斜率
-    double baselineFallingSlope;        // 基准下降斜率
-    uint16_t baselinePeakValue;         // 基准波峰值
-    uint16_t baselineValleyValue;       // 基准波谷值
-    qint64 baselinePeriodMs;            // 基准周期时长(毫秒)
-};
-
-// 三角波统计参数
-struct TriangleStats {
-    // 基本统计
-    double currentFrequency;            // 当前频率(Hz)
-    double baselineFrequency;           // 基准频率(Hz)
-    qint64 currentPeriodMs;             // 当前周期时长(毫秒)
-    qint64 baselinePeriodMs;            // 基准周期时长(毫秒)
-
-    // 斜率统计
-    double currentRisingSlope;          // 当前上升斜率
-    double currentFallingSlope;         // 当前下降斜率
-    double baselineRisingSlope;         // 基准上升斜率
-    double baselineFallingSlope;        // 基准下降斜率
-
-    // 峰谷统计
-    uint16_t currentPeakValue;          // 当前波峰值
-    uint16_t currentValleyValue;        // 当前波谷值
-    uint16_t baselinePeakValue;         // 基准波峰值
-    uint16_t baselineValleyValue;       // 基准波谷值
-
-    // 状态信息
-    TrianglePhase currentPhase;         // 当前相位
-    int completedCycles;                // 已完成周期数
-    double noiseLevel;                  // 噪声水平
-    bool isLearning;                    // 是否在学习阶段
-
-    TriangleStats() : currentFrequency(0), baselineFrequency(0), currentPeriodMs(0), baselinePeriodMs(0),
-                     currentRisingSlope(0), currentFallingSlope(0), baselineRisingSlope(0), baselineFallingSlope(0),
-                     currentPeakValue(0), currentValleyValue(0), baselinePeakValue(0), baselineValleyValue(0),
-                     currentPhase(TrianglePhase::Unknown), completedCycles(0), noiseLevel(0), isLearning(true) {}
-};
-
-struct CycleData {
-    qint64 startTime;                   // 周期开始时间
-    qint64 endTime;                     // 周期结束时间
-    qint64 duration;                    // 周期持续时间(毫秒)
-    qint64 peakTime;                    // 波峰时间 - 新增
-    qint64 valleyTime;                  // 波谷时间 - 新增
-    qint64 risingDuration;              // 上升持续时间 - 新增
-    qint64 fallingDuration;             // 下降持续时间 - 新增
-    double risingSlope;                 // 上升斜率
-    double fallingSlope;                // 下降斜率
-    uint16_t peakValue;                 // 波峰值
-    uint16_t valleyValue;               // 波谷值
-    bool isValid;                       // 周期是否有效
-
-    CycleData() : startTime(0), endTime(0), duration(0), peakTime(0), valleyTime(0),
-                 risingDuration(0), fallingDuration(0), risingSlope(0), fallingSlope(0),
-                 peakValue(0), valleyValue(0), isValid(false) {}
-};
-
-// =============================================================================
-// 主类定义
-// =============================================================================
 
 class OptimizedTriangleAnomalyDetector : public QObject
 {
@@ -177,138 +65,107 @@ public:
     explicit OptimizedTriangleAnomalyDetector(QObject *parent = nullptr);
     ~OptimizedTriangleAnomalyDetector();
 
-private:
-    BaseLineTriangleInfo m_baseLineInfo;
-
-signals:
-//    signalBaseLineInfoStudyCommpleted(const BaseLineTriangleInfo&);
-
-
-public:
     // 主要接口
-    void feedData(uint16_t value);
-    void setOptimalParameters();
+    void addDataPoint(uint16_t value, qint64 timestamp = 0);
     void reset();
+    void setLearningDataCount(int count) { m_learningDataCount = count; }
+
+    // 配置参数
+    void setAnomalyThresholds(double peakThreshold = 3.0,
+                             double valleyThreshold = 3.0,
+                             double slopeThreshold = 2.0,
+                             double periodThreshold = 0.3);
 
     // 状态查询
-    bool isRecording() const { return m_isRecording; }
-    bool isLearningComplete() const { return !m_currentStats.isLearning; }
-    TriangleStats getCurrentStats() const { return m_currentStats; }
-    TriangleAnomalyResult getLastAnomaly() const { return m_lastAnomaly; }
+    bool isLearningComplete() const { return m_learningComplete; }
+    TriangleStats getLearnedStats() const { return m_learnedStats; }
+    TrianglePhase getCurrentPhase() const { return m_currentPhase; }
 
-    // 参数配置
-    void setSamplingRate(double sampleRate) { m_samplingRate = sampleRate; }
-    void setRecordingDuration(int seconds) { m_recordingDuration = seconds; }
+    // 调试信息
+    QString getDebugInfo() const;
 
 signals:
     void anomalyDetected(const TriangleAnomalyResult& anomaly);
-    void recordingStarted(const TriangleAnomalyResult& trigger);
-    void recordingData(uint16_t value, qint64 timestamp);
-    void recordingStopped(int totalDataPoints);
+    void learningProgress(int current, int total);
+    void learningCompleted(const TriangleStats& stats);
     void statsUpdated(const TriangleStats& stats);
-    void learningProgressUpdated(int progress, int total);
-    void learningCompleted(const TriangleStats& learnedStats);
 
 private slots:
-    void onRecordingTimeout();
+    void processLearningData();
 
 private:
-    // 核心检测算法
-    void analyzeCurrentData();
-    void detectPhaseTransition();
-    void processCycleCompletion();
-    TriangleAnomalyResult checkForAnomalies();
+    // 数据结构
+    struct DataPoint {
+        uint16_t value;
+        qint64 timestamp;
+        int index;
+    };
 
-    // 异常检测函数
-    bool checkRisingSlopeAnomaly(double& severity);
-    bool checkFallingSlopeAnomaly(double& severity);
-    bool checkPeakValueAnomaly(double& severity);
-    bool checkValleyValueAnomaly(double& severity);
-    bool checkPeriodAnomaly(double& severity);
+    struct PeakValleyPoint {
+        uint16_t value;
+        int index;
+        bool isPeak;  // true为波峰，false为波谷
+    };
 
-    // 学习算法
-    void updateLearningData();
-    void completeLearningPhase();
+    struct CycleInfo {
+        int startIndex;
+        int endIndex;
+        uint16_t peakValue;
+        uint16_t valleyValue;
+        double risingSlope; //上升沿
+        double fallingSlope;//下降沿
+        int periodLength;
+    };
 
-    // 辅助函数
-    TrianglePhase determineCurrentPhase();
-    double calculateSlope(int startIdx, int endIdx);
-    double calculateNoiseLevel();
-    bool isValidCycle(const CycleData& cycle);
-    void updateStatistics();
+    // 核心算法
+    void findPeaksAndValleys();
+    void analyzeCycles();
+    void calculateStatistics();
+    double calculateSlope(int startIdx, int endIdx) const;//斜率计算
+    TrianglePhase determineCurrentPhase(uint16_t currentValue) const;
 
-    void handleInitialStabilization();
-    void estimateDataRange();
+    // 异常检测
+    void checkForAnomalies(uint16_t value, qint64 timestamp);
+    TriangleAnomalyResult createAnomalyResult(TriangleAnomalyType type,
+                                            double severity,
+                                            uint16_t triggerValue,
+                                            qint64 timestamp,
+                                            const QString& description,
+                                            double expectedValue,
+                                            double actualValue,
+                                            double threshold) const;
 
-private:
-    // 相位转换处理
-    void processPhaseTransition(TrianglePhase newPhase);
-    void analyzeCompletedPhaseSegment(TrianglePhase phase, int startIdx, int endIdx);
+    // 数据管理
+    QQueue<DataPoint> m_learningData;      // 学习阶段数据
+    QQueue<DataPoint> m_recentData;        // 最近的数据点（用于实时分析）
+    QList<PeakValleyPoint> m_peaksValleys; // 波峰波谷点
+    QList<CycleInfo> m_cycles;             // 周期信息
 
-    // 周期管理
-    void startNewCycle(qint64 currentTime);
-    void recordPeakValue(uint16_t peakValue, qint64 peakTime);
-    void recordValleyValue(uint16_t valleyValue, qint64 valleyTime);
-    void completeCycle(qint64 currentTime);
-    void updateCurrentStatistics();
+    // 学习阶段参数
+    int m_learningDataCount{15000};         // 学习数据点数
+    bool m_learningComplete{false};        // 学习是否完成
+    TriangleStats m_learnedStats;          // 学习到的统计信息
 
+    // 实时检测参数
+    TrianglePhase m_currentPhase{TrianglePhase::Unknown};
+    int m_currentCycleStartIndex{-1};      // 当前周期开始索引
+    uint16_t m_lastPeak{0};                // 最近的波峰值
+    uint16_t m_lastValley{0};              // 最近的波谷值
+    int m_recentDataSize{100};             // 保持最近数据的大小
 
+    // 异常检测阈值 (标准差倍数)
+    double m_peakAnomalyThreshold{3.0};    // 波峰异常阈值
+    double m_valleyAnomalyThreshold{3.0};  // 波谷异常阈值
+    double m_slopeAnomalyThreshold{2.0};   // 斜率异常阈值
+    double m_periodAnomalyThreshold{0.3};  // 周期异常阈值 (比例)
 
+    // 状态跟踪
+    int m_totalDataPoints{0};              // 总数据点数
+    qint64 m_lastAnomalyTime{0};           // 上次异常检测时间
+    static constexpr int MIN_ANOMALY_INTERVAL = 1000; // 最小异常间隔(ms)
 
-private:
-    // 数据缓冲区
-    std::deque<uint16_t> m_dataBuffer;      // 原始数据缓冲区
-    std::deque<qint64> m_timestampBuffer;   // 时间戳缓冲区
-
-    // 学习阶段数据
-    std::deque<CycleData> m_learningCycles; // 学习阶段的周期数据
-    std::deque<double> m_risingSlopeHistory; // 上升斜率历史
-    std::deque<double> m_fallingSlopeHistory; // 下降斜率历史
-    std::deque<uint16_t> m_peakHistory;     // 波峰历史
-    std::deque<uint16_t> m_valleyHistory;   // 波谷历史
-    std::deque<qint64> m_periodHistory;     // 周期历史
-
-    // 当前状态
-    TriangleStats m_currentStats;           // 当前统计信息
-    TriangleAnomalyResult m_lastAnomaly;    // 最后检测到的异常
-
-    // 相位检测
-    TrianglePhase m_previousPhase;          // 前一个相位
-    int m_phaseStartIndex;                  // 当前相位开始索引
-    qint64 m_phaseStartTime;                // 当前相位开始时间
-    qint64 m_cycleStartTime;                // 当前周期开始时间
-
-    // 系统参数
-    double m_samplingRate;                  // 采样率
-    int m_recordingDuration;                // 记录持续时间
-    int m_analysisCounter;                  // 分析计数器
-    int m_samplesProcessed;                 // 已处理样本数
-
-    // 记录控制
-    bool m_isRecording;                     // 是否正在记录
-    QTimer* m_recordingTimer;               // 记录定时器
-    int m_recordedDataPoints;               // 已记录数据点数
-
-    // 当前周期数据
-    CycleData m_currentCycle;               // 当前正在分析的周期
-
-
-    // 在类中添加新的成员变量
-private:
-    // 初始化状态控制
-    bool m_isInitialStabilizationComplete;      // 初始稳定期是否完成
-    int m_stablePhaseCount;                     // 稳定相位计数
-    TrianglePhase m_lastConfirmedPhase;         // 最后确认的相位
-
-    // 数据范围估算
-    uint16_t m_estimatedMin;                    // 估算的最小值
-    uint16_t m_estimatedMax;                    // 估算的最大值
-    bool m_rangeEstimationComplete;             // 范围估算是否完成
-
-    // 周期有效性统计
-    int m_validCyclesCount;                     // 有效周期计数
-    int m_totalAttemptedCycles;                 // 尝试的总周期数
+    // 调试用
+    mutable QMutex m_mutex;
 };
 
 #endif // OPTIMIZEDTRIANGLEANOMALYDETECTOR_H
-

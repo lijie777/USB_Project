@@ -90,8 +90,7 @@ void AnomalyRecorderThread::run()
 
         // 等待数据
         if (m_dataQueue.isEmpty()) {
-            m_dataAvailable.wait(&m_mutex, 100);  // 最多等待100ms
-            continue;
+            m_dataAvailable.wait(&m_mutex);  // 无限等待
         }
 
         // 批量处理数据

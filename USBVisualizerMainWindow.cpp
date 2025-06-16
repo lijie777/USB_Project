@@ -58,35 +58,8 @@ USBVisualizerMainWindow::USBVisualizerMainWindow(QWidget* parent)
     setupPlot();
     refreshDevices();
 
-    // 创建三角波检测器
-    m_triangleDetector = new OptimizedTriangleAnomalyDetector(this);
-
-    // 连接信号槽
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::anomalyDetected,
-            this, &USBVisualizerMainWindow::onTriangleAnomalyDetected);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::statsUpdated,
-            this, &USBVisualizerMainWindow::onTriangleStatsUpdated);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningProgressUpdated,
-            this, &USBVisualizerMainWindow::onTriangleLearningProgress);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningCompleted,
-            this, &USBVisualizerMainWindow::onTriangleLearningCompleted);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::recordingStarted,
-            this, &USBVisualizerMainWindow::onRecordingStarted);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::recordingData,
-            this, &USBVisualizerMainWindow::onRecordingData);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::recordingStopped,
-            this, &USBVisualizerMainWindow::onRecordingStopped);
-
     //设置默认参数
     setupTriangleDetector();
-
-    //创建菜单
-    createTriangleDebugMenu();
-
-    // 异常记录线程
-    m_recorderThread = new AnomalyRecorderThread(this);
-    connect(m_recorderThread, &AnomalyRecorderThread::recordingFinished, this, &USBVisualizerMainWindow::onRecorderThreadFinished);
-    connect(m_recorderThread, &AnomalyRecorderThread::recordingError, this, &USBVisualizerMainWindow::onRecorderThreadError);
 
     // 设置绘图更新定时器
     m_plotUpdateTimer = new QTimer(this);
@@ -358,7 +331,7 @@ void USBVisualizerMainWindow::setupUI()
 
     m_sleepTimeSpin = new QSpinBox(this);
     m_sleepTimeSpin->setRange(10, 100000);     // 10ms到5000ms
-    m_sleepTimeSpin->setValue(100);         // 默认1000ms
+    m_sleepTimeSpin->setValue(1000);         // 默认1000ms
     m_sleepTimeSpin->setToolTip("最大值100000");
     m_sleepTimeSpin->setSuffix(" ms");
     m_sleepTimeSpin->setMaximumWidth(100);
@@ -382,8 +355,8 @@ void USBVisualizerMainWindow::setupUI()
     bufferReadLayout->addWidget(new QLabel("一次读取数据大小(默认4096字节):"));
 
     m_bufferReadSpin = new QSpinBox(this);
-    m_bufferReadSpin->setRange(1024, 1024*1024*10);     // 10ms到5000ms
-    m_bufferReadSpin->setValue(4096);         // 默认1000ms
+    m_bufferReadSpin->setRange(1024, 1024*1024*10);
+    m_bufferReadSpin->setValue(40960);
     m_bufferReadSpin->setToolTip("最大值1020*1024*10");
     m_bufferReadSpin->setMaximumWidth(100);
     bufferReadLayout->addWidget(m_bufferReadSpin);
@@ -806,6 +779,16 @@ void USBVisualizerMainWindow::clearData()
 
     m_sampleCountLabel->setText("采样数: 0");
     m_bufferUsageLabel->setText("缓冲区: 0%");
+
+    // 重置三角波检测器
+    if (m_triangleDetector) {
+        m_triangleDetector->reset();
+        m_learningProgressLabel->setText("学习进度: 等待数据...");
+        m_triangleStatusLabel->setText("");
+        m_initializationStatusLabel->setText("初始化: 等待稳定...");
+        m_cycleValidityLabel->setText("周期质量: 待评估");
+        m_detectionQualityLabel->setText("检测质量: 初始化中");
+    }
 }
 
 
@@ -903,29 +886,19 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
 
         if (m_decimationFactor == 1)
         {
-             //TODO:根据测试发现1500已结构成了一个周期，所以目前只取1500个点，后期要设置成动态设置的
-             if (m_baseCalcPointsList.size() < 1500)
-             {
-                 m_baseCalcPointsList.append(value);
+            // 将数据添加到三角波检测器
+            if (m_triangleDetector) {
+                m_triangleDetector->addDataPoint(value, QDateTime::currentMSecsSinceEpoch());
+            }
 
-                 continue;
-             }
-             else{
-                 //计算波峰，波谷，和上升斜率和下降斜率，及周期(内部只执行一次)
-//                 m_triangleDetector->startStudyBaseParams(m_baseCalcPointsList);
-                 //三角波检测
-                 m_triangleDetector->feedData(value);
+            // 无抽取，直接处理
+            m_dataBuffer.enqueue(value);
 
-                 // 无抽取，直接处理
-                 m_dataBuffer.enqueue(value);
-
-                 if (m_isPrintEnabled)
-                 {
-                     pointsNum++;
-                     qDebug()<<"一次读取数据的点数（无数据抽取）："<<pointsNum << "值："<< value;
-                 }
-             }
-
+            if (m_isPrintEnabled)
+            {
+                pointsNum++;
+                qDebug()<<"一次读取数据的点数（无数据抽取）："<<pointsNum << "值："<< value;
+            }
          } else {
              // 执行数据抽取
              m_decimationSum += value;
@@ -941,8 +914,10 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
                  if (m_lastValue == averageValue)
                      continue;
 
-                 //三角波检测
-                 m_triangleDetector->feedData(value);
+                 // 将数据添加到三角波检测器
+                 if (m_triangleDetector) {
+                     m_triangleDetector->addDataPoint(value, QDateTime::currentMSecsSinceEpoch());
+                 }
 
                  m_dataBuffer.enqueue(averageValue);
                  // 重置计数器
@@ -1258,248 +1233,30 @@ void USBVisualizerMainWindow::processDataBuffer()
     }
 
     qint64 elapsed = timer.elapsed();
-
-
-//    //当处理最后的一批数据时停止定时器
-//    if (m_dataBuffer.isEmpty())
-//    {
-//        m_plotUpdateTimer->stop();
-//        qDebug()<<"渲染定时器已停止，等待下一次数据处理...";
-//    }
-}
-
-void USBVisualizerMainWindow::setupTriangleDetector()
-{
-    if (!m_triangleDetector) return;
-
-      m_triangleDetector->setOptimalParameters();
-
-      LOG_INFO_CL("三角波检测器配置完成，开始学习阶段");
-}
-
-// 修改调试菜单
-void USBVisualizerMainWindow::createTriangleDebugMenu()
-{
-    QMenu* debugMenu = menuBar()->addMenu("三角波调试");
-
-    QAction* showDebugAction = debugMenu->addAction("显示检测状态");
-    connect(showDebugAction, &QAction::triggered,
-            this, &USBVisualizerMainWindow::showTriangleDebugInfo);
-
-//    QAction* fineTuneAction = debugMenu->addAction("微调检测参数");
-//    connect(fineTuneAction, &QAction::triggered,
-//            this, &USBVisualizerMainWindow::finetuneTriangleDetector);
-
-    QAction* resetDetectorAction = debugMenu->addAction("重置检测器");
-    connect(resetDetectorAction, &QAction::triggered, [this]() {
-        resetTriangleDetector();
-    });
-
-    QAction* forceLearningAction = debugMenu->addAction("强制完成学习");
-    connect(forceLearningAction, &QAction::triggered, [this]() {
-        if (m_triangleDetector && !m_triangleDetector->isLearningComplete()) {
-            // 强制设置学习周期为当前已处理的样本数
-            // 注意：这需要在检测器中添加相应的方法
-            QMessageBox::information(this, "强制完成学习",
-                                    "已强制完成学习阶段，开始异常检测");
-        }
-    });
 }
 
 
-void USBVisualizerMainWindow::onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly)
+
+void USBVisualizerMainWindow::resizeEvent(QResizeEvent* event)
 {
-    QString anomalyTypeStr = getAnomalyTypeString(anomaly.type);
+    QMainWindow::resizeEvent(event);
 
-    LOG_INFO_CL("🚨 三角波异常: {}, 严重程度: {}%",
-             anomalyTypeStr, int(anomaly.severity * 100));
-
-    // 更新UI状态
-    QString statusMsg = QString("异常: %1 (%2%) - %3")
-                       .arg(anomalyTypeStr)
-                       .arg(int(anomaly.severity * 100))
-                       .arg(anomaly.description);
-
-    if (m_triangleStatusLabel) {
-        m_triangleStatusLabel->setText(statusMsg);
-
-        // 根据严重程度设置颜色
-        QString color = anomaly.severity > TRIANGLE_SEVERE_ANOMALY_THRESHOLD ? "red" :  // 使用宏定义
-                       anomaly.severity > 0.4 ? "orange" : "yellow";
-        m_triangleStatusLabel->setStyleSheet(QString("QLabel { color: %1; font-weight: bold; }").arg(color));
-    }
-
-    // 严重异常日志记录 - 使用宏定义的阈值
-    if (anomaly.severity > TRIANGLE_SEVERE_ANOMALY_THRESHOLD) {
-        LOG_CRITICAL_CL("检测到严重的三角波异常,类型：{} 严重程度：{} 描述：{} ，系统将会记录接下来{}秒的数据",
-                        anomalyTypeStr, int(anomaly.severity * 100), anomaly.description, TRIANGLE_RECORDING_DURATION);
-    }
-}
-// 三角波统计信息更新
-void USBVisualizerMainWindow::onTriangleStatsUpdated(const TriangleStats& stats)
-{
-    // 更新主状态
-       if (stats.isLearning) {
-           // 学习阶段的状态显示
-           QString mainStatus = QString("学习阶段 | 频率: %1 Hz | 周期: %2 ms | 已完成: %3 个周期")
-                              .arg(stats.currentFrequency, 0, 'f', 3)
-                              .arg(stats.currentPeriodMs)
-                              .arg(stats.completedCycles);
-
-           if (m_triangleStatusLabel) {
-               m_triangleStatusLabel->setText(mainStatus);
-               m_triangleStatusLabel->setStyleSheet("QLabel { color: yellow; }");
-           }
-       } else {
-           // 检测阶段的状态显示
-           QString mainStatus = QString("检测中 | 频率: %1 Hz | 上升斜率: %2 | 下降斜率: %3")
-                              .arg(stats.currentFrequency, 0, 'f', 3)
-                              .arg(stats.currentRisingSlope, 0, 'f', 1)
-                              .arg(stats.currentFallingSlope, 0, 'f', 1);
-
-           if (m_triangleStatusLabel) {
-               m_triangleStatusLabel->setText(mainStatus);
-               m_triangleStatusLabel->setStyleSheet("QLabel { color: lightgreen; }");
-           }
-       }
-
-       // 更新周期质量显示
-       if (m_cycleValidityLabel) {
-           if (stats.completedCycles > 0) {
-               QString qualityStatus = QString("已完成: %1 | 峰值: %2 | 谷值: %3")
-                                     .arg(stats.completedCycles)
-                                     .arg(stats.currentPeakValue)
-                                     .arg(stats.currentValleyValue);
-               m_cycleValidityLabel->setText(qualityStatus);
-           } else {
-               m_cycleValidityLabel->setText("周期质量: 等待完整周期");
-           }
-       }
-
-       // 更新检测质量
-       if (m_detectionQualityLabel) {
-           QString phaseStr;
-           switch (stats.currentPhase) {
-               case TrianglePhase::Rising: phaseStr = "上升"; break;
-               case TrianglePhase::Falling: phaseStr = "下降"; break;
-               case TrianglePhase::AtPeak: phaseStr = "波峰"; break;
-               case TrianglePhase::AtValley: phaseStr = "波谷"; break;
-               default: phaseStr = "未知"; break;
-           }
-
-           QString qualityStatus = QString("当前相位: %1 | 噪声: %2")
-                                 .arg(phaseStr)
-                                 .arg(stats.noiseLevel, 0, 'f', 1);
-           m_detectionQualityLabel->setText(qualityStatus);
-       }
-}
-// 新增：初始化状态更新
-void USBVisualizerMainWindow::updateInitializationStatus(bool stabilizationComplete, bool rangeEstimationComplete)
-{
-    if (m_initializationStatusLabel) {
-        if (stabilizationComplete && rangeEstimationComplete) {
-            m_initializationStatusLabel->setText("初始化: 完成 ✓");
-            m_initializationStatusLabel->setStyleSheet("QLabel { color: lightgreen; }");
-        } else if (rangeEstimationComplete) {
-            m_initializationStatusLabel->setText("初始化: 稳定中...");
-            m_initializationStatusLabel->setStyleSheet("QLabel { color: yellow; }");
-        } else {
-            m_initializationStatusLabel->setText("初始化: 范围估算中...");
-            m_initializationStatusLabel->setStyleSheet("QLabel { color: orange; }");
-        }
+    // 确保图表在窗口大小改变时正确重绘
+    if (m_customPlot) {
+        QTimer::singleShot(100, [this]() { m_customPlot->replot(); });
     }
 }
 
-
-void USBVisualizerMainWindow::onRecordingData(uint16_t value, qint64 timestamp)
+void USBVisualizerMainWindow::showEvent(QShowEvent* event)
 {
-    // 直接传递给记录线程，不阻塞主线程
-    if (m_recorderThread && m_recorderThread->isRunning()) {
-        m_recorderThread->addData(value, timestamp);
-    } else {
-        LOG_WARN_CL("记录线程未运行，数据丢失: value={}, timestamp={}", value, timestamp);
+    QMainWindow::showEvent(event);
+
+    // 窗口显示后确保图表正确渲染
+    if (m_customPlot) {
+        QTimer::singleShot(200, [this]() { m_customPlot->replot(); });
     }
 }
-
-void USBVisualizerMainWindow::onRecordingStopped(int totalDataPoints)
-{
-    LOG_INFO_CL("=== 三角波异常记录停止 ===");
-    LOG_INFO_CL("预计记录数据点: {}", totalDataPoints);
-    LOG_INFO_CL("停止异常记录");
-
-    // 停止记录线程
-    if (m_recorderThread && m_recorderThread->isRunning()) {
-        m_recorderThread->stopRecording();
-        // 注意：实际的清理工作会在 onRecorderThreadFinished 中完成
-    } else {
-        // 如果线程未运行，直接恢复UI
-        updateRecordingUI(false);
-    }
-}
-
-// 修改调试信息显示
-void USBVisualizerMainWindow::showTriangleDebugInfo()
-{
-    if (!m_triangleDetector) return;
-
-        TriangleStats stats = m_triangleDetector->getCurrentStats();
-        TriangleAnomalyResult lastAnomaly = m_triangleDetector->getLastAnomaly();
-
-        QString debugInfo;
-        debugInfo += "=== 三角波检测状态 ===\n\n";
-
-        // 学习状态
-        if (stats.isLearning) {
-            debugInfo += "🔄 学习阶段进行中...\n\n";
-        } else {
-            debugInfo += "✅ 学习已完成，异常检测中\n\n";
-        }
-
-        // 当前统计（简化版）
-        debugInfo += "当前统计:\n";
-        debugInfo += QString("• 频率: %1 Hz (基准: %2 Hz)\n")
-                    .arg(stats.currentFrequency, 0, 'f', 4)
-                    .arg(stats.baselineFrequency, 0, 'f', 4);
-        debugInfo += QString("• 周期: %1 ms (基准: %2 ms)\n")
-                    .arg(stats.currentPeriodMs)
-                    .arg(stats.baselinePeriodMs);
-        debugInfo += QString("• 上升斜率: %1 (基准: %2)\n")
-                    .arg(stats.currentRisingSlope, 0, 'f', 2)
-                    .arg(stats.baselineRisingSlope, 0, 'f', 2);
-        debugInfo += QString("• 下降斜率: %1 (基准: %2)\n")
-                    .arg(stats.currentFallingSlope, 0, 'f', 2)
-                    .arg(stats.baselineFallingSlope, 0, 'f', 2);
-        debugInfo += QString("• 波峰值: %1 (基准: %2)\n")
-                    .arg(stats.currentPeakValue)
-                    .arg(stats.baselinePeakValue);
-        debugInfo += QString("• 波谷值: %1 (基准: %2)\n")
-                    .arg(stats.currentValleyValue)
-                    .arg(stats.baselineValleyValue);
-        debugInfo += QString("• 当前相位: %1\n").arg(
-            stats.currentPhase == TrianglePhase::Rising ? "上升" :
-            stats.currentPhase == TrianglePhase::Falling ? "下降" :
-            stats.currentPhase == TrianglePhase::AtPeak ? "波峰" :
-            stats.currentPhase == TrianglePhase::AtValley ? "波谷" : "未知");
-        debugInfo += QString("• 已完成周期: %1\n").arg(stats.completedCycles);
-        debugInfo += QString("• 噪声水平: %1\n").arg(stats.noiseLevel, 0, 'f', 2);
-
-        // 最近异常信息
-        if (lastAnomaly.type != TriangleAnomalyType::None) {
-            debugInfo += "\n最近异常:\n";
-            debugInfo += QString("• 类型: %1\n").arg(getAnomalyTypeString(lastAnomaly.type));
-            debugInfo += QString("• 严重程度: %1%\n").arg(int(lastAnomaly.severity * 100));
-            debugInfo += QString("• 触发值: %1\n").arg(lastAnomaly.triggerValue);
-            debugInfo += QString("• 时间: %1\n")
-                        .arg(QDateTime::fromMSecsSinceEpoch(lastAnomaly.timestamp).toString());
-            debugInfo += QString("• 描述: %1\n").arg(lastAnomaly.description);
-        }
-
-        debugInfo += QString("\n记录状态: %1")
-                    .arg(m_triangleDetector->isRecording() ? "正在记录异常数据" : "正常监控");
-
-        QMessageBox::information(this, "三角波检测调试信息", debugInfo);
-}
-
+/********************************异常监测记录结果*************************************/
 void USBVisualizerMainWindow::onRecorderThreadFinished(int totalPoints, const QString& filename)
 {
     LOG_INFO_CL("异常记录线程完成: {} 个数据点", totalPoints);
@@ -1555,223 +1312,164 @@ void USBVisualizerMainWindow::onRecorderThreadError(const QString& error)
                          QString("异常记录过程中发生错误:\n%1").arg(error));
 }
 
-// 修改记录UI更新
-void USBVisualizerMainWindow::updateRecordingUI(bool isRecording)
+/***********************************异常监测代码*************************************/
+
+void USBVisualizerMainWindow::setupTriangleDetector()
 {
-    if (!m_triangleStatusLabel) return;
+    m_triangleDetector = new OptimizedTriangleAnomalyDetector(this);
 
-    if (isRecording) {
-        QString anomalyTypeStr = getAnomalyTypeString(m_currentAnomalyTrigger.type);
-        QString statusMsg = QString("🔴 正在记录三角波异常: %1 (严重度:%2%)")
-                       .arg(anomalyTypeStr)
-                       .arg(int(m_currentAnomalyTrigger.severity * 100));
-        m_triangleStatusLabel->setText(statusMsg);
-        m_triangleStatusLabel->setStyleSheet("QLabel { color: white; font-weight: bold; "
-                                           "background-color: rgba(255,0,0,100); padding: 5px; "
-                                           "border-radius: 3px; }");
+    // 连接信号槽
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::anomalyDetected,
+            this, &USBVisualizerMainWindow::onTriangleAnomalyDetected);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningProgress,
+            this, &USBVisualizerMainWindow::onTriangleLearningProgress);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningCompleted,
+            this, &USBVisualizerMainWindow::onTriangleLearningCompleted);
+    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::statsUpdated,
+            this, &USBVisualizerMainWindow::onTriangleStatsUpdated);
 
-        // 禁用某些控件避免干扰
-        if (m_clearBtn) m_clearBtn->setEnabled(false);
+    // 设置检测阈值（可根据需要调整）
+    m_triangleDetector->setAnomalyThresholds(3.0, 3.0, 2.0, 0.3);
 
-    } else {
-        // 恢复正常状态
-        if (m_deviceConnected && m_dataCollection) {
-            m_triangleStatusLabel->setText("状态: 正在采集数据 - " + m_currentDeviceInfo);
-        } else if (m_deviceConnected) {
-            m_triangleStatusLabel->setText("状态: 已连接 - " + m_currentDeviceInfo);
-        } else {
-            m_triangleStatusLabel->setText("状态: 未连接");
-        }
-        m_triangleStatusLabel->setStyleSheet("");  // 恢复默认样式
+    // 异常记录线程
+    m_recorderThread = new AnomalyRecorderThread(this);
+    connect(m_recorderThread, &AnomalyRecorderThread::recordingFinished, this, &USBVisualizerMainWindow::onRecorderThreadFinished);
+    connect(m_recorderThread, &AnomalyRecorderThread::recordingError, this, &USBVisualizerMainWindow::onRecorderThreadError);
 
-        if (m_clearBtn) m_clearBtn->setEnabled(true);
-    }
+    qDebug() << "三角波检测器初始化完成";
 }
 
-// 修改异常类型字符串转换函数
+// 添加新的槽函数：
+void USBVisualizerMainWindow::onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly)
+{
+    qDebug() << "检测到三角波异常：" << anomaly.description;
+
+    // 生成异常记录文件名
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString anomalyTypeStr = getAnomalyTypeString(anomaly.type);
+    m_anomalyRecordFileName = QString("anomaly_%1_%2.csv")
+                                .arg(timestamp)
+                                .arg(anomalyTypeStr);
+
+    // 启动异常记录线程
+    if (m_recorderThread && !m_recorderThread->isRunning()) {
+        m_currentAnomalyTrigger = anomaly;
+        m_recordingStartTime = QDateTime::currentMSecsSinceEpoch();
+
+        if (m_recorderThread->startRecording(m_anomalyRecordFileName, anomaly)) {
+            qDebug() << "异常记录已启动：" << m_anomalyRecordFileName;
+
+            // 更新UI状态
+            updateRecordingUI(true);
+
+            // 在图表中标记异常点（可选）
+            markAnomalyOnChart(anomaly);
+        } else {
+            qDebug() << "启动异常记录失败";
+        }
+    }
+
+    // 更新状态显示
+    m_triangleStatusLabel->setText(QString("异常: %1 (严重度: %2%)")
+                                  .arg(anomalyTypeStr)
+                                  .arg(anomaly.severity * 100, 0, 'f', 1));
+}
+
+void USBVisualizerMainWindow::onTriangleLearningProgress(int current, int total)
+{
+    QString studyProgress = QString("学习进度: %1/%2 (%3%)")
+            .arg(current)
+            .arg(total)
+            .arg(current * 100 / total);
+
+    m_learningProgressLabel->setText(studyProgress);
+
+    qDebug()<<"学习进度：" << studyProgress;
+}
+
+void USBVisualizerMainWindow::onTriangleLearningCompleted(const TriangleStats& stats)
+{
+    m_learningProgressLabel->setText("学习完成！√");
+
+    m_triangleStatusLabel->setText(QString("已学习 - 周期:%1点, 波峰:%2, 波谷:%3, 上升斜率:4%, 下降斜率:5% , 波峰标准差:6%,"
+                                           " 波谷标准差:7%, 上升斜率标准差:8%, 下降斜率标准差:9%")
+                                 .arg(stats.avgPeriodLength)
+                                 .arg(stats.avgPeakValue, 0, 'f', 0)
+                                 .arg(stats.avgValleyValue, 0, 'f', 0)
+                                 .arg(stats.avgRisingSlope, 0, 'f', 0)
+                                 .arg(stats.avgFallingSlope, 0, 'f', 0)
+                                 .arg(stats.peakValueStdDev, 0, 'f', 0)
+                                 .arg(stats.valleyValueStdDev, 0, 'f', 0)
+                                 .arg(stats.risingSlopeStdDev, 0, 'f', 0)
+                                 .arg(stats.fallingSlopeStdDev, 0, 'f', 0));
+
+    // 更新详细状态
+    m_initializationStatusLabel->setText("初始化: 完成");
+    m_cycleValidityLabel->setText(QString("周期质量: %1个有效周期").arg(stats.totalCycles));
+    m_detectionQualityLabel->setText("检测质量: 正常监测中...");
+
+    qDebug() << "三角波学习完成，开始实时异常检测...";
+}
+
+void USBVisualizerMainWindow::onTriangleStatsUpdated(const TriangleStats& stats)
+{
+    // 更新统计信息显示
+//    emit statisticsUpdated(m_currentDataRate, m_currentSampleRate);
+}
+
 QString USBVisualizerMainWindow::getAnomalyTypeString(TriangleAnomalyType type)
 {
     switch (type) {
-           case TriangleAnomalyType::RisingSlopeAnomaly:
-               return "上升斜率异常";
-           case TriangleAnomalyType::FallingSlopeAnomaly:
-               return "下降斜率异常";
-           case TriangleAnomalyType::PeakValueAnomaly:
-               return "波峰值异常";
-           case TriangleAnomalyType::ValleyValueAnomaly:
-               return "波谷值异常";
-           case TriangleAnomalyType::PeriodAnomaly:
-               return "周期异常";
-           default:
-               return "未知异常";
-       }
-}
-
-
-// 重置检测器
-void USBVisualizerMainWindow::resetTriangleDetector()
-{
-    if (m_triangleDetector) {
-        // 重置检测器
-        m_triangleDetector->reset();
-        // 重新配置为自适应模式
-        setupTriangleDetector();
-
-        // 重置UI显示
-        if (m_triangleStatusLabel) {
-            m_triangleStatusLabel->setText("");
-            m_triangleStatusLabel->setStyleSheet("");
-        }
-        if (m_learningProgressLabel) {
-            m_learningProgressLabel->setText("学习进度: 等待数据...");
-            m_learningProgressLabel->setStyleSheet("");
-        }
-
-        QMessageBox::information(this, "重置完成", "三角波检测器已重置，重新开始学习阶段");
-    }
-}
-// 新增：学习进度更新
-void USBVisualizerMainWindow::onTriangleLearningProgress(int progress, int total)
-{
-    if (m_learningProgressLabel) {
-            int percentage = (progress * 100) / total;
-            QString progressText = QString("学习进度: %1/%2 (%3%) - 有效周期")
-                                 .arg(progress)
-                                 .arg(total)
-                                 .arg(percentage);
-            m_learningProgressLabel->setText(progressText);
-
-            // 设置进度条样式
-            if (percentage < 100) {
-                m_learningProgressLabel->setStyleSheet("QLabel { color: cyan; font-weight: bold; }");
-            }
-        }
-}
-// 新增：学习完成处理
-void USBVisualizerMainWindow::onTriangleLearningCompleted(const TriangleStats& learnedStats)
-{
-    if (m_learningProgressLabel) {
-           m_learningProgressLabel->setText("学习完成 ✓");
-           m_learningProgressLabel->setStyleSheet("QLabel { color: green; font-weight: bold; }");
-       }
-
-       // 更新初始化状态为完成
-       if (m_initializationStatusLabel) {
-           m_initializationStatusLabel->setText("初始化: 学习完成 ✓");
-           m_initializationStatusLabel->setStyleSheet("QLabel { color: green; font-weight: bold; }");
-       }
-
-       // 显示学习结果 - 使用新的简化结构
-       QString learningResult = QString(
-           "三角波参数学习完成！\n\n"
-           "学习到的基准参数:\n"
-           "• 基准频率: %1 Hz\n"
-           "• 基准周期: %2 ms\n"
-           "• 基准上升斜率: %3\n"
-           "• 基准下降斜率: %4\n"
-           "• 基准波峰值: %5\n"
-           "• 基准波谷值: %6\n"
-           "• 完成周期数: %7\n\n"
-           "现在开始异常监测..."
-       ).arg(learnedStats.baselineFrequency, 0, 'f', 3)         // 使用新的字段名
-        .arg(learnedStats.baselinePeriodMs)                      // 使用新的字段名
-        .arg(learnedStats.baselineRisingSlope, 0, 'f', 1)       // 使用新的字段名
-        .arg(learnedStats.baselineFallingSlope, 0, 'f', 1)      // 使用新的字段名
-        .arg(learnedStats.baselinePeakValue)                     // 使用新的字段名
-        .arg(learnedStats.baselineValleyValue)                   // 使用新的字段名
-        .arg(learnedStats.completedCycles);
-
-       LOG_INFO_CL("三角波参数学习完成，参数为：{}", learningResult);
-       LOG_INFO_CL("三角波参数学习完成，开始异常监测");
-
-       // 可选：显示学习完成的消息框（根据需要启用）
-       // QMessageBox::information(this, "学习完成", learningResult);
-}
-
-// 修改记录开始处理
-void USBVisualizerMainWindow::onRecordingStarted(const TriangleAnomalyResult &trigger)
-{
-    LOG_INFO_CL("=== 三角波异常记录开始（多线程） ===");
-    LOG_INFO_CL("检测到异常，开始记录数据");
-
-    // 保存触发异常信息
-    m_currentAnomalyTrigger = trigger;
-    m_recordingStartTime = QDateTime::currentMSecsSinceEpoch();
-
-    QString anomalyTypeStr = getAnomalyTypeString(trigger.type);
-
-    LOG_INFO_CL("异常类型: {}, 严重程度: {}%", anomalyTypeStr, int(trigger.severity * 100));
-    LOG_INFO_CL("触发值: {}, 异常描述: {}", trigger.triggerValue, trigger.description);
-
-    // 创建异常记录目录
-    QString anomalyDir = "triangle_anomaly_records";  // 明确使用三角波目录名
-    QDir dir;
-    if (!dir.exists(anomalyDir)) {
-        if (!dir.mkpath(anomalyDir)) {
-            LOG_ERROR_CL("无法创建三角波异常记录目录: {}", anomalyDir);
-            return;
-        }
-        LOG_INFO_CL("创建三角波异常记录目录: {}", anomalyDir);
-    }
-
-    // 生成文件名
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss-zzz");
-    m_anomalyRecordFileName = QString("%1/TriangleAnomaly_%2_%3.csv")
-                             .arg(anomalyDir)
-                             .arg(anomalyTypeStr)
-                             .arg(timestamp);
-
-    // 启动记录线程
-    if (!m_recorderThread->startRecording(m_anomalyRecordFileName, trigger)) {
-        LOG_ERROR_CL("无法启动记录线程");
-        QMessageBox::critical(this, "错误", "无法启动异常记录线程");
-        return;
-    }
-
-    LOG_INFO_CL("三角波异常记录文件: {}", m_anomalyRecordFileName);
-
-    // 更新UI状态
-    updateRecordingUI(true);
-
-    // 在图表上添加异常开始标记
-    if (m_customPlot && m_dataGraph && !m_plotDataX.empty()) {
-        // 添加垂直线标记
-        QCPItemLine* anomalyMarker = new QCPItemLine(m_customPlot);
-        anomalyMarker->start->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().lower);
-        anomalyMarker->end->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().upper);
-        anomalyMarker->setPen(QPen(Qt::red, 2, Qt::DashLine));
-
-        // 添加文本标签
-        QCPItemText* textLabel = new QCPItemText(m_customPlot);
-        textLabel->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
-        textLabel->position->setCoords(m_plotDataX.back(), m_customPlot->yAxis->range().upper * 0.95);
-        textLabel->setText(QString("%1\n记录开始").arg(anomalyTypeStr));
-        textLabel->setFont(QFont(font().family(), 10, QFont::Bold));
-        textLabel->setPen(QPen(Qt::red));
-        textLabel->setBrush(QBrush(QColor(255, 255, 255, 220)));
-        textLabel->setPadding(QMargins(5, 5, 5, 5));
-
-        m_customPlot->replot();
+        case TriangleAnomalyType::RisingSlopeAnomaly:
+            return "上升斜率异常";
+        case TriangleAnomalyType::FallingSlopeAnomaly:
+            return "下降斜率异常";
+        case TriangleAnomalyType::PeakValueAnomaly:
+            return "波峰异常";
+        case TriangleAnomalyType::ValleyValueAnomaly:
+            return "波谷异常";
+        case TriangleAnomalyType::PeriodAnomaly:
+            return "周期异常";
+        default:
+            return "未知异常";
     }
 }
 
-
-void USBVisualizerMainWindow::resizeEvent(QResizeEvent* event)
+void USBVisualizerMainWindow::markAnomalyOnChart(const TriangleAnomalyResult& anomaly)
 {
-    QMainWindow::resizeEvent(event);
+    if (!m_customPlot) return;
 
-    // 确保图表在窗口大小改变时正确重绘
-    if (m_customPlot) {
-        QTimer::singleShot(100, [this]() { m_customPlot->replot(); });
+    // 在图表上添加异常标记
+    QCPItemTracer* tracer = new QCPItemTracer(m_customPlot);
+    tracer->setGraph(m_dataGraph);
+    tracer->setGraphKey(m_sampleCounter); // 当前采样点
+    tracer->setInterpolating(true);
+    tracer->setStyle(QCPItemTracer::tsCircle);
+    tracer->setPen(QPen(Qt::red, 3));
+    tracer->setBrush(QBrush(Qt::red));
+    tracer->setSize(8);
+
+    // 添加文本标签
+    QCPItemText* textLabel = new QCPItemText(m_customPlot);
+    textLabel->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
+    textLabel->position->setType(QCPItemPosition::ptPlotCoords);
+    textLabel->position->setCoords(m_sampleCounter, anomaly.triggerValue + 200);
+    textLabel->setText(QString("异常: %1").arg(getAnomalyTypeString(anomaly.type)));
+    textLabel->setFont(QFont(font().family(), 8));
+    textLabel->setPen(QPen(Qt::red));
+    textLabel->setBrush(QBrush(QColor(255, 255, 255, 200)));
+
+    m_customPlot->replot();
+}
+
+void USBVisualizerMainWindow::updateRecordingUI(bool isRecording)
+{
+    if (isRecording) {
+        m_detectionQualityLabel->setText("检测质量: 记录异常中...");
+        m_detectionQualityLabel->setStyleSheet("color: red; font-weight: bold;");
+    } else {
+        m_detectionQualityLabel->setText("检测质量: 正常监测中");
+        m_detectionQualityLabel->setStyleSheet("");
     }
 }
 
-void USBVisualizerMainWindow::showEvent(QShowEvent* event)
-{
-    QMainWindow::showEvent(event);
-
-    // 窗口显示后确保图表正确渲染
-    if (m_customPlot) {
-        QTimer::singleShot(200, [this]() { m_customPlot->replot(); });
-    }
-}

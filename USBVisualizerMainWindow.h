@@ -73,34 +73,7 @@ private:
     void updateDeviceCombo();
     void processDataBuffer();
 
-    void setupTriangleDetector();        // 三角波检测器设置
-    void createTriangleDebugMenu();      // 三角波调试菜单
 
-    // 辅助函数
-    void updateRecordingUI(bool isRecording);
-    QString getAnomalyTypeString(TriangleAnomalyType type);  // 简化的异常类型
-    void resetTriangleDetector();        // 重置检测器
-    void updateInitializationStatus(bool stabilizationComplete, bool rangeEstimationComplete);  // 新增
-
-private slots:
-    void onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly);
-    void onTriangleStatsUpdated(const TriangleStats& stats);
-    void onTriangleLearningProgress(int progress, int total);
-    void onTriangleLearningCompleted(const TriangleStats& learnedStats);
-    void onRecordingStarted(const TriangleAnomalyResult& trigger);
-
-    void onRecordingData(uint16_t value, qint64 timestamp);
-    void onRecordingStopped(int totalDataPoints);
-
-    void showTriangleDebugInfo();       // 调试信息
-
-    // 异常记录线程相关槽函数
-    void onRecorderThreadFinished(int totalPoints, const QString& filename);
-    void onRecorderThreadError(const QString& error);
-
-signals:
-    //当满足一个周期数据时发送数据
-    void periodicSignal();
 // 抽取倍数新增代码
 private:
     // 数据抽取相关
@@ -138,13 +111,32 @@ private slots:
     void applySleepTimeConfig();             // 应用睡眠时间配置
     void onDebugPrintToggled(bool enabled);
 
+
+private slots:
+    // 新增三角波检测相关槽函数
+    void onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly);
+    void onTriangleStatsUpdated(const TriangleStats& stats);
+    void onTriangleLearningProgress(int progress, int total);
+    void onTriangleLearningCompleted(const TriangleStats& learnedStats);
+
+    //异常检测记录结果
+    void onRecorderThreadError(const QString& error);
+    void onRecorderThreadFinished(int totalPoints, const QString& filename);
 private:
-    // 异常记录相关
-    OptimizedTriangleAnomalyDetector* m_triangleDetector;        // 三角波检测器
-    AnomalyRecorderThread* m_recorderThread;                     // 记录线程
-    TriangleAnomalyResult m_currentAnomalyTrigger;              // 三角波异常结果
-    qint64 m_recordingStartTime;                                 // 记录开始时间
-    QString m_anomalyRecordFileName;                             // 异常记录文件名
+    // 新增辅助函数
+    void setupTriangleDetector();
+    QString getAnomalyTypeString(TriangleAnomalyType type);
+    void markAnomalyOnChart(const TriangleAnomalyResult& anomaly);
+    void updateRecordingUI(bool isRecording);
+
+    // 新增成员变量
+    OptimizedTriangleAnomalyDetector* m_triangleDetector{nullptr};
+    TriangleAnomalyResult m_currentAnomalyTrigger;
+    QString m_anomalyRecordFileName;
+    qint64 m_recordingStartTime{0};
+    AnomalyRecorderThread * m_recorderThread;
+
+private:
 
     // UI组件
     QWidget* m_centralWidget;
