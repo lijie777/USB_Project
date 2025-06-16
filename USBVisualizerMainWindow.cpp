@@ -260,7 +260,6 @@ void USBVisualizerMainWindow::setupUI()
     m_triangleStatusLabel = new QLabel();
     m_triangleStatusLabel->setWordWrap(true);
     m_triangleStatusLabel->setFixedWidth(140);
-m_triangleStatusLabel->setText("asldfkijasldkfasldk");
     m_learningProgressLabel = new QLabel("学习进度: 等待数据...");
     m_learningProgressLabel->setWordWrap(true);
 
@@ -908,11 +907,12 @@ void USBVisualizerMainWindow::onDataReceived(const QByteArray& data)
              if (m_baseCalcPointsList.size() < 1500)
              {
                  m_baseCalcPointsList.append(value);
-                 //发送信号出去计算波峰，波谷，和上升斜率和下降斜率，及周期
-                 //学习中...
+
                  continue;
              }
              else{
+                 //计算波峰，波谷，和上升斜率和下降斜率，及周期(内部只执行一次)
+//                 m_triangleDetector->startStudyBaseParams(m_baseCalcPointsList);
                  //三角波检测
                  m_triangleDetector->feedData(value);
 
@@ -1286,9 +1286,9 @@ void USBVisualizerMainWindow::createTriangleDebugMenu()
     connect(showDebugAction, &QAction::triggered,
             this, &USBVisualizerMainWindow::showTriangleDebugInfo);
 
-    QAction* fineTuneAction = debugMenu->addAction("微调检测参数");
-    connect(fineTuneAction, &QAction::triggered,
-            this, &USBVisualizerMainWindow::finetuneTriangleDetector);
+//    QAction* fineTuneAction = debugMenu->addAction("微调检测参数");
+//    connect(fineTuneAction, &QAction::triggered,
+//            this, &USBVisualizerMainWindow::finetuneTriangleDetector);
 
     QAction* resetDetectorAction = debugMenu->addAction("重置检测器");
     connect(resetDetectorAction, &QAction::triggered, [this]() {

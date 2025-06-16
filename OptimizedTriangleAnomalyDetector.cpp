@@ -50,6 +50,7 @@ OptimizedTriangleAnomalyDetector::~OptimizedTriangleAnomalyDetector()
     }
 }
 
+
 void OptimizedTriangleAnomalyDetector::feedData(uint16_t value)
 {
     qint64 currentTime = QDateTime::currentMSecsSinceEpoch();

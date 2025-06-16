@@ -75,6 +75,7 @@ enum class TriangleAnomalyType {
     FallingSlopeAnomaly,        // 下降斜率异常
     PeakValueAnomaly,           // 波峰值异常
     ValleyValueAnomaly,         // 波谷值异常
+    DataJumpAnomaly,            // 数据跳变异常（差值在30以上）
     PeriodAnomaly               // 周期异常
 };
 
@@ -102,6 +103,15 @@ struct TriangleAnomalyResult {
 
     TriangleAnomalyResult() : type(TriangleAnomalyType::None), severity(0.0),
                              triggerValue(0), timestamp(0), phaseWhenDetected(TrianglePhase::Unknown) {}
+};
+
+struct BaseLineTriangleInfo
+{
+    double baselineRisingSlope;         // 基准上升斜率
+    double baselineFallingSlope;        // 基准下降斜率
+    uint16_t baselinePeakValue;         // 基准波峰值
+    uint16_t baselineValleyValue;       // 基准波谷值
+    qint64 baselinePeriodMs;            // 基准周期时长(毫秒)
 };
 
 // 三角波统计参数
@@ -167,6 +177,14 @@ public:
     explicit OptimizedTriangleAnomalyDetector(QObject *parent = nullptr);
     ~OptimizedTriangleAnomalyDetector();
 
+private:
+    BaseLineTriangleInfo m_baseLineInfo;
+
+signals:
+//    signalBaseLineInfoStudyCommpleted(const BaseLineTriangleInfo&);
+
+
+public:
     // 主要接口
     void feedData(uint16_t value);
     void setOptimalParameters();
@@ -233,6 +251,10 @@ private:
     void recordValleyValue(uint16_t valleyValue, qint64 valleyTime);
     void completeCycle(qint64 currentTime);
     void updateCurrentStatistics();
+
+
+
+
 private:
     // 数据缓冲区
     std::deque<uint16_t> m_dataBuffer;      // 原始数据缓冲区
