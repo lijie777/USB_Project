@@ -224,7 +224,7 @@ void USBVisualizerMainWindow::setupUI()
     m_bufferUsageLabel = new QLabel("缓冲区: 0%");
 
     // 三角波检测状态信息组 - 主要状态
-    QGroupBox* triangleMainGroup = new QGroupBox("三角波参数学习", this);
+    QGroupBox* triangleMainGroup = new QGroupBox("三角波状态", this);
     triangleMainGroup->setFixedHeight(GROUPHEIGHT);
     controlGridLayout->addWidget(triangleMainGroup, 0, 4);
 
@@ -236,13 +236,14 @@ void USBVisualizerMainWindow::setupUI()
     m_learningProgressLabel = new QLabel("学习进度: 等待数据...");
     m_learningProgressLabel->setWordWrap(true);
 
+    triangleMainLayout->addWidget(m_learningProgressLabel);    
     triangleMainLayout->addWidget(m_triangleStatusLabel);
-    triangleMainLayout->addWidget(m_learningProgressLabel);
     triangleMainLayout->addStretch();
 
     // 三角波详细状态信息组 - 新增
     QGroupBox* triangleDetailGroup = new QGroupBox("检测详情", this);
     triangleDetailGroup->setFixedHeight(GROUPHEIGHT);
+    triangleDetailGroup->setFixedWidth(120);
     controlGridLayout->addWidget(triangleDetailGroup, 0, 5);
 
     QVBoxLayout* triangleDetailLayout = new QVBoxLayout(triangleDetailGroup);
@@ -352,7 +353,7 @@ void USBVisualizerMainWindow::setupUI()
     sleepLayout->addStretch();
 
     QHBoxLayout* bufferReadLayout = new QHBoxLayout();
-    bufferReadLayout->addWidget(new QLabel("一次读取数据大小(默认4096字节):"));
+    bufferReadLayout->addWidget(new QLabel("读取数据大小(字节):"));
 
     m_bufferReadSpin = new QSpinBox(this);
     m_bufferReadSpin->setRange(1024, 1024*1024*10);
@@ -652,6 +653,26 @@ void USBVisualizerMainWindow::connectDevice()
         m_readerThread->setChunkSize(m_bufferReadValue);
         m_readerThread->setSleepFactor(m_sleepTimeSpin->value());
 
+        // 【新增】重置三角波检测相关状态和颜色
+        QString waitingText = "学习进度: 等待数据...";
+        m_learningProgressLabel->setText(waitingText);
+        updateLearningProgressColor(waitingText);
+
+        m_triangleStatusLabel->setText("");
+        updateTriangleStatusColor("");
+
+        QString initText = "初始化: 等待稳定...";
+        m_initializationStatusLabel->setText(initText);
+        updateInitializationStatusColor(initText);
+
+        QString cycleText = "周期质量: 待评估";
+        m_cycleValidityLabel->setText(cycleText);
+        updateCycleValidityColor(cycleText);
+
+        QString detectionText = "检测质量: 初始化中";
+        m_detectionQualityLabel->setText(detectionText);
+        updateDetectionQualityColor(detectionText);
+
         QMessageBox::information(this, "成功", "USB设备连接成功");
         qDebug() << "设备连接成功";
     } else {
@@ -681,8 +702,17 @@ void USBVisualizerMainWindow::disconnectDevice()
 
     m_statusLabel->setText("状态: 未连接");
     m_triangleStatusLabel->setText("");
-
     m_dataRateLabel->setText("数据率: 0 KB/s");
+
+    // 【新增】重置所有状态颜色
+    resetAllStatusColors();
+
+    // 重置状态文本
+    m_learningProgressLabel->setText("学习进度: 等待数据...");
+    m_triangleStatusLabel->setText("");
+    m_initializationStatusLabel->setText("初始化: 等待稳定...");
+    m_cycleValidityLabel->setText("周期质量: 待评估");
+    m_detectionQualityLabel->setText("检测质量: 初始化中");
 
     QMessageBox::information(this, "成功", "USB设备已断开");
 }
@@ -710,6 +740,11 @@ void USBVisualizerMainWindow::startDataCollection()
     m_readerThread->start();
 
     m_statusLabel->setText("状态: 正在采集数据 - " + m_currentDeviceInfo);
+
+    // 【新增】更新检测状态
+    QString detectionText = "检测质量: 准备中...";
+    m_detectionQualityLabel->setText(detectionText);
+    updateDetectionQualityColor(detectionText);
 }
 
 void USBVisualizerMainWindow::stopDataCollection()
@@ -783,11 +818,25 @@ void USBVisualizerMainWindow::clearData()
     // 重置三角波检测器
     if (m_triangleDetector) {
         m_triangleDetector->reset();
-        m_learningProgressLabel->setText("学习进度: 等待数据...");
+        // 【修改】更新状态文本和颜色
+        QString waitingText = "学习进度: 等待数据...";
+        m_learningProgressLabel->setText(waitingText);
+        updateLearningProgressColor(waitingText);
+
         m_triangleStatusLabel->setText("");
-        m_initializationStatusLabel->setText("初始化: 等待稳定...");
-        m_cycleValidityLabel->setText("周期质量: 待评估");
-        m_detectionQualityLabel->setText("检测质量: 初始化中");
+        updateTriangleStatusColor("");
+
+        QString initText = "初始化: 等待稳定...";
+        m_initializationStatusLabel->setText(initText);
+        updateInitializationStatusColor(initText);
+
+        QString cycleText = "周期质量: 待评估";
+        m_cycleValidityLabel->setText(cycleText);
+        updateCycleValidityColor(cycleText);
+
+        QString detectionText = "检测质量: 初始化中";
+        m_detectionQualityLabel->setText(detectionText);
+        updateDetectionQualityColor(detectionText);
     }
 }
 
@@ -1325,8 +1374,6 @@ void USBVisualizerMainWindow::setupTriangleDetector()
             this, &USBVisualizerMainWindow::onTriangleLearningProgress);
     connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::learningCompleted,
             this, &USBVisualizerMainWindow::onTriangleLearningCompleted);
-    connect(m_triangleDetector, &OptimizedTriangleAnomalyDetector::statsUpdated,
-            this, &USBVisualizerMainWindow::onTriangleStatsUpdated);
 
     // 设置检测阈值（可根据需要调整）
     m_triangleDetector->setAnomalyThresholds(3.0, 3.0, 2.0, 0.3);
@@ -1370,9 +1417,11 @@ void USBVisualizerMainWindow::onTriangleAnomalyDetected(const TriangleAnomalyRes
     }
 
     // 更新状态显示
-    m_triangleStatusLabel->setText(QString("异常: %1 (严重度: %2%)")
-                                  .arg(anomalyTypeStr)
-                                  .arg(anomaly.severity * 100, 0, 'f', 1));
+    QString statusText = QString("异常: %1 (严重度: %2%)")
+                            .arg(anomalyTypeStr)
+                            .arg(anomaly.severity * 100, 0, 'f', 1);
+    m_triangleStatusLabel->setText(statusText);
+    updateTriangleStatusColor(statusText);
 }
 
 void USBVisualizerMainWindow::onTriangleLearningProgress(int current, int total)
@@ -1384,33 +1433,43 @@ void USBVisualizerMainWindow::onTriangleLearningProgress(int current, int total)
 
     m_learningProgressLabel->setText(studyProgress);
 
+    updateLearningProgressColor(studyProgress);
+
     qDebug()<<"学习进度：" << studyProgress;
 }
 
 void USBVisualizerMainWindow::onTriangleLearningCompleted(const TriangleStats& stats)
 {
-    m_learningProgressLabel->setText("学习完成！");
+    QString completedText = "学习完成！√";
+    m_learningProgressLabel->setText(completedText);
+    updateLearningProgressColor(completedText); // 【新增】更新颜色
 
-    m_triangleStatusLabel->setText(QString("已学习 - 周期:%1点, 波峰:%2, 波谷:%3, 上升斜率:%4, 下降斜率:%5")
-                                 .arg(stats.avgPeriodLength)
-                                 .arg(stats.avgPeakValue, 0, 'f', 0)
-                                 .arg(stats.avgValleyValue, 0, 'f', 0)
-                                 .arg(stats.avgRisingSlope)
-                                 .arg(stats.avgFallingSlope));
+    QString statusText = QString("已学习 - 周期:%1点, 波峰:%2, 波谷:%3, 上升斜率:%4, 下降斜率:%5")
+            .arg(stats.avgPeriodLength)
+            .arg(stats.avgPeakValue, 0, 'f', 0)
+            .arg(stats.avgValleyValue, 0, 'f', 0)
+            .arg(stats.avgRisingSlope)
+            .arg(stats.avgFallingSlope);
+
+    m_triangleStatusLabel->setText(statusText);
+    updateTriangleStatusColor(statusText); //
 
     // 更新详细状态
-    m_initializationStatusLabel->setText("初始化: 完成");
-    m_cycleValidityLabel->setText(QString("周期质量: %1个有效周期").arg(stats.totalCycles));
-    m_detectionQualityLabel->setText("检测质量: 正常监测中");
+    QString initText = "初始化: 完成 √";
+    m_initializationStatusLabel->setText(initText);
+    updateInitializationStatusColor(initText); // 【新增】更新颜色
+
+    QString cycleText = QString("周期质量: %1个有效周期").arg(stats.totalCycles);
+    m_cycleValidityLabel->setText(cycleText);
+    updateCycleValidityColor(cycleText); // 【新增】更新颜色
+
+    QString detectionText = "检测质量: 正常监测中";
+    m_detectionQualityLabel->setText(detectionText);
+    updateDetectionQualityColor(detectionText); // 【新增】更新颜色
 
     qDebug() << "三角波学习完成，开始实时异常检测";
 }
 
-void USBVisualizerMainWindow::onTriangleStatsUpdated(const TriangleStats& stats)
-{
-    // 更新统计信息显示
-//    emit statisticsUpdated(m_currentDataRate, m_currentSampleRate);
-}
 
 QString USBVisualizerMainWindow::getAnomalyTypeString(TriangleAnomalyType type)
 {
@@ -1425,6 +1484,8 @@ QString USBVisualizerMainWindow::getAnomalyTypeString(TriangleAnomalyType type)
             return "波谷异常";
         case TriangleAnomalyType::PeriodAnomaly:
             return "周期异常";
+        case TriangleAnomalyType::DataJumpAnomaly:  // 新增
+            return "数据跳变异常";
         default:
             return "未知异常";
     }
@@ -1460,11 +1521,108 @@ void USBVisualizerMainWindow::markAnomalyOnChart(const TriangleAnomalyResult& an
 void USBVisualizerMainWindow::updateRecordingUI(bool isRecording)
 {
     if (isRecording) {
-        m_detectionQualityLabel->setText("检测质量: 记录异常中...");
-        m_detectionQualityLabel->setStyleSheet("color: red; font-weight: bold;");
-    } else {
-        m_detectionQualityLabel->setText("检测质量: 正常监测中");
-        m_detectionQualityLabel->setStyleSheet("");
+           QString recordingText = "检测质量: 记录异常中...";
+           m_detectionQualityLabel->setText(recordingText);
+           updateDetectionQualityColor(recordingText); // 【新增】更新颜色
+       } else {
+           QString normalText = "检测质量: 正常监测中";
+           m_detectionQualityLabel->setText(normalText);
+           updateDetectionQualityColor(normalText); // 【新增】更新颜色
+       }
+}
+
+
+/***********************************颜色处理****************************************/
+
+
+// 设置标签颜色的通用函数
+void USBVisualizerMainWindow::setLabelColor(QLabel* label, const QString& color, bool bold)
+{
+    QString style = QString("color: %1;").arg(color);
+    if (bold) {
+        style += " font-weight: bold;";
+    }
+    label->setStyleSheet(style);
+}
+
+// 学习进度颜色管理
+void USBVisualizerMainWindow::updateLearningProgressColor(const QString& status)
+{
+    if (status.contains("等待数据") || status.contains("等待")) {
+        setLabelColor(m_learningProgressLabel, "#888888"); // 灰色
+    } else if (status.contains("学习进度") && !status.contains("完成")) {
+        setLabelColor(m_learningProgressLabel, "#FFA500", true); // 橙色，加粗
+    } else if (status.contains("完成")) {
+        setLabelColor(m_learningProgressLabel, "#00AA00", true); // 绿色，加粗
+    } else if (status.contains("失败") || status.contains("错误")) {
+        setLabelColor(m_learningProgressLabel, "#FF4444", true); // 红色，加粗
     }
 }
+
+// 三角波状态颜色管理
+void USBVisualizerMainWindow::updateTriangleStatusColor(const QString& status)
+{
+    if (status.isEmpty() || status.contains("未连接")) {
+        setLabelColor(m_triangleStatusLabel, "#888888"); // 灰色
+    } else if (status.contains("学习") || status.contains("已学习")) {
+        setLabelColor(m_triangleStatusLabel, "#00AA00"); // 绿色
+    } else if (status.contains("异常")) {
+        setLabelColor(m_triangleStatusLabel, "#FF4444", true); // 红色，加粗
+    } else {
+        setLabelColor(m_triangleStatusLabel, "#FFFFFF"); // 默认白色
+    }
+}
+
+// 初始化状态颜色管理
+void USBVisualizerMainWindow::updateInitializationStatusColor(const QString& status)
+{
+    if (status.contains("等待稳定") || status.contains("等待")) {
+        setLabelColor(m_initializationStatusLabel, "#888888"); // 灰色
+    } else if (status.contains("初始化中") || status.contains("进行中")) {
+        setLabelColor(m_initializationStatusLabel, "#FFA500"); // 橙色
+    } else if (status.contains("完成")) {
+        setLabelColor(m_initializationStatusLabel, "#00AA00"); // 绿色
+    } else if (status.contains("失败") || status.contains("错误")) {
+        setLabelColor(m_initializationStatusLabel, "#FF4444"); // 红色
+    }
+}
+
+// 周期质量颜色管理
+void USBVisualizerMainWindow::updateCycleValidityColor(const QString& status)
+{
+    if (status.contains("待评估") || status.contains("等待")) {
+        setLabelColor(m_cycleValidityLabel, "#888888"); // 灰色
+    } else if (status.contains("评估中") || status.contains("分析中")) {
+        setLabelColor(m_cycleValidityLabel, "#FFA500"); // 橙色
+    } else if (status.contains("质量") && (status.contains("好") || status.contains("有效") || status.contains("个有效周期"))) {
+        setLabelColor(m_cycleValidityLabel, "#00AA00"); // 绿色
+    } else if (status.contains("质量差") || status.contains("无效") || status.contains("异常")) {
+        setLabelColor(m_cycleValidityLabel, "#FF4444"); // 红色
+    }
+}
+
+// 检测质量颜色管理
+void USBVisualizerMainWindow::updateDetectionQualityColor(const QString& status)
+{
+    if (status.contains("初始化中") || status.contains("等待")) {
+        setLabelColor(m_detectionQualityLabel, "#888888"); // 灰色
+    } else if (status.contains("正常监测") || status.contains("正常")) {
+        setLabelColor(m_detectionQualityLabel, "#00AA00"); // 绿色
+    } else if (status.contains("记录异常中") || status.contains("异常")) {
+        setLabelColor(m_detectionQualityLabel, "#FF4444", true); // 红色，加粗
+    } else if (status.contains("准备中") || status.contains("启动中")) {
+        setLabelColor(m_detectionQualityLabel, "#FFA500"); // 橙色
+    }
+}
+
+// 重置所有状态颜色
+void USBVisualizerMainWindow::resetAllStatusColors()
+{
+    setLabelColor(m_learningProgressLabel, "#888888");
+    setLabelColor(m_triangleStatusLabel, "#888888");
+    setLabelColor(m_initializationStatusLabel, "#888888");
+    setLabelColor(m_cycleValidityLabel, "#888888");
+    setLabelColor(m_detectionQualityLabel, "#888888");
+}
+
 

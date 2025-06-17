@@ -1,7 +1,6 @@
 #ifndef OPTIMIZEDTRIANGLEANOMALYDETECTOR_H
 #define OPTIMIZEDTRIANGLEANOMALYDETECTOR_H
 
-#include <QMutex>
 #include <QObject>
 #include <QQueue>
 #include <QTimer>
@@ -9,8 +8,9 @@
 #include <QDateTime>
 #include <algorithm>
 #include <cmath>
-
-// 三角波相位枚举
+#include <QMutex>
+#include <QPointF>
+// 三角波相位枚举 - 保持不变
 enum class TrianglePhase {
     Unknown,
     Rising,      // 上升阶段
@@ -26,15 +26,16 @@ enum class TriangleAnomalyType {
     FallingSlopeAnomaly,   // 下降斜率异常
     PeakValueAnomaly,      // 波峰值异常
     ValleyValueAnomaly,    // 波谷值异常
-    PeriodAnomaly          // 周期异常
+    PeriodAnomaly,         // 周期异常
+    DataJumpAnomaly        // 【新增】数据跳变异常 - 检测相邻点的突变
 };
 
 // 三角波统计信息
 struct TriangleStats {
     double avgPeakValue{0};        // 平均波峰值
     double avgValleyValue{0};      // 平均波谷值
-    double avgRisingSlope{0};      // 平均上升斜率
-    double avgFallingSlope{0};     // 平均下降斜率
+    double avgRisingSlope{0};      // 平均上升斜率（线性拟合）
+    double avgFallingSlope{0};     // 平均下降斜率（线性拟合）
     int avgPeriodLength{0};        // 平均周期长度
     double peakValueStdDev{0};     // 波峰值标准差
     double valleyValueStdDev{0};   // 波谷值标准差
@@ -42,6 +43,10 @@ struct TriangleStats {
     double fallingSlopeStdDev{0};  // 下降斜率标准差
     int totalCycles{0};            // 总周期数
     bool isValid{false};           // 统计信息是否有效
+
+    // 【新增】半周期相关 - 用于更精确的斜率计算和相位判断
+    int avgRisingEdgeLength{0};    // 平均上升沿长度
+    int avgFallingEdgeLength{0};   // 平均下降沿长度
 };
 
 // 异常检测结果
@@ -55,6 +60,10 @@ struct TriangleAnomalyResult {
     double expectedValue{0};       // 期望值
     double actualValue{0};         // 实际值
     double threshold{0};           // 阈值
+
+    // 【新增】跳变异常相关 - 专门用于数据跳变检测
+    uint16_t previousValue{0};     // 前一个值（用于跳变检测）
+    double jumpMagnitude{0};       // 跳变幅度
 };
 
 class OptimizedTriangleAnomalyDetector : public QObject
@@ -74,7 +83,8 @@ public:
     void setAnomalyThresholds(double peakThreshold = 3.0,
                              double valleyThreshold = 3.0,
                              double slopeThreshold = 2.0,
-                             double periodThreshold = 0.3);
+                             double periodThreshold = 0.3,
+                             double jumpThreshold = 10.0); // 【新增参数】跳变阈值
 
     // 状态查询
     bool isLearningComplete() const { return m_learningComplete; }
@@ -88,7 +98,6 @@ signals:
     void anomalyDetected(const TriangleAnomalyResult& anomaly);
     void learningProgress(int current, int total);
     void learningCompleted(const TriangleStats& stats);
-    void statsUpdated(const TriangleStats& stats);
 
 private slots:
     void processLearningData();
@@ -107,33 +116,70 @@ private:
         bool isPeak;  // true为波峰，false为波谷
     };
 
+    // 【新增】半周期边沿信息结构 - 用于更精确的斜率计算
+    struct EdgeInfo {
+        int startIndex;
+        int endIndex;
+        uint16_t startValue;
+        uint16_t endValue;
+        double slope;          // 线性拟合斜率
+        double correlation;    // 拟合相关系数
+        bool isRising;         // true为上升沿，false为下降沿
+    };
+
+    // 【修改】周期信息结构 - 增加了详细的边沿信息
     struct CycleInfo {
         int startIndex;
         int endIndex;
         uint16_t peakValue;
         uint16_t valleyValue;
-        double risingSlope; //上升沿
-        double fallingSlope;//下降沿
+        EdgeInfo risingEdge;   // 【新增】上升沿信息
+        EdgeInfo fallingEdge;  // 【新增】下降沿信息
         int periodLength;
+
+        // 【删除但注释保留】原来简单的斜率计算
+        // double risingSlope;    // 原来用两点计算的简单斜率
+        // double fallingSlope;   // 原来用两点计算的简单斜率
+        // 删除原因：用线性拟合的EdgeInfo替代，更准确
     };
 
     // 核心算法
     void findPeaksAndValleys();
     void analyzeCycles();
     void calculateStatistics();
-    double calculateSlope(int startIdx, int endIdx) const;//斜率计算
-    TrianglePhase determineCurrentPhase(uint16_t currentValue) const;
+
+    // 【新增】改进的斜率计算：使用线性拟合
+    EdgeInfo calculateEdgeSlope(int startIdx, int endIdx, bool isRising) const;
+    double linearRegression(const QVector<QPointF>& points, double& correlation) const;
+
+    // 【删除但注释保留】原来简单的斜率计算
+    // double calculateSlope(int startIdx, int endIdx) const;
+    // 删除原因：用线性拟合方法替代两点斜率计算，提高准确性
+
+    // 【新增】改进的相位判断
+    TrianglePhase determineCurrentPhaseImproved(uint16_t currentValue) const;
+    TrianglePhase analyzeRecentTrend(int windowSize = 20) const;
+
+    // 【删除但注释保留】原来简单的相位判断
+    // TrianglePhase determineCurrentPhase(uint16_t currentValue) const;
+    // 删除原因：原方法只用3个点判断趋势，容易受噪声影响，用改进版替代
 
     // 异常检测
     void checkForAnomalies(uint16_t value, qint64 timestamp);
+
+    // 【新增】专门的跳变异常检测
+    void checkDataJumpAnomaly(uint16_t currentValue, uint16_t previousValue, qint64 timestamp);
+
+    // 【新增】实时斜率异常检测 - 检测完整半周期的斜率
+    void checkSlopeAnomalyInRealTime();
+
     TriangleAnomalyResult createAnomalyResult(TriangleAnomalyType type,
                                             double severity,
                                             uint16_t triggerValue,
                                             qint64 timestamp,
                                             const QString& description,
                                             double expectedValue,
-                                            double actualValue,
-                                            double threshold) const;
+                                            double actualValue) const;
 
     // 数据管理
     QQueue<DataPoint> m_learningData;      // 学习阶段数据
@@ -148,24 +194,40 @@ private:
 
     // 实时检测参数
     TrianglePhase m_currentPhase{TrianglePhase::Unknown};
-    int m_currentCycleStartIndex{-1};      // 当前周期开始索引
-    uint16_t m_lastPeak{0};                // 最近的波峰值
-    uint16_t m_lastValley{0};              // 最近的波谷值
-    int m_recentDataSize{100};             // 保持最近数据的大小
 
-    // 异常检测阈值 (标准差倍数)
+    // 【新增】改进的相位跟踪
+    TrianglePhase m_lastConfidentPhase{TrianglePhase::Unknown}; // 最后确定的相位
+
+    // 【新增】半周期检测相关 - 用于实时斜率监测
+    QQueue<DataPoint> m_currentEdgeData;   // 当前半周期数据
+    bool m_inRisingEdge{false};            // 是否在上升沿
+    bool m_inFallingEdge{false};           // 是否在下降沿
+    int m_edgeStartIndex{-1};              // 当前边沿开始索引
+
+    // 【删除但注释保留】原来的简单状态跟踪
+    // int m_currentCycleStartIndex{-1};      // 当前周期开始索引
+    // uint16_t m_lastPeak{0};                // 最近的波峰值
+    // uint16_t m_lastValley{0};              // 最近的波谷值
+    // 删除原因：用更详细的半周期跟踪替代，提供更精确的状态信息
+
+    int m_recentDataSize{50};              // 【修改】从100改为50，减少内存占用
+
+    // 异常检测阈值
     double m_peakAnomalyThreshold{3.0};    // 波峰异常阈值
     double m_valleyAnomalyThreshold{3.0};  // 波谷异常阈值
     double m_slopeAnomalyThreshold{2.0};   // 斜率异常阈值
     double m_periodAnomalyThreshold{0.3};  // 周期异常阈值 (比例)
+    double m_jumpAnomalyThreshold{10.0};   // 【新增】跳变异常阈值
 
     // 状态跟踪
     int m_totalDataPoints{0};              // 总数据点数
     qint64 m_lastAnomalyTime{0};           // 上次异常检测时间
-    static constexpr int MIN_ANOMALY_INTERVAL = 1000; // 最小异常间隔(ms)
+    uint16_t m_lastValue{0};               // 【新增】上一个数据值 - 用于跳变检测
+    static constexpr int MIN_ANOMALY_INTERVAL = 2000; // 【修改】在检测到一个异常后在接下来的2000ms内不会报告新的异常
 
     // 调试用
     mutable QMutex m_mutex;
 };
 
 #endif // OPTIMIZEDTRIANGLEANOMALYDETECTOR_H
+

@@ -74,6 +74,17 @@ private:
     void processDataBuffer();
 
 
+private:
+    // 【新增】状态标签颜色管理函数
+    void setLabelColor(QLabel* label, const QString& color, bool bold = false);
+    void updateLearningProgressColor(const QString& status);
+    void updateTriangleStatusColor(const QString& status);
+    void updateInitializationStatusColor(const QString& status);
+    void updateCycleValidityColor(const QString& status);
+    void updateDetectionQualityColor(const QString& status);
+    void resetAllStatusColors();
+
+
 // 抽取倍数新增代码
 private:
     // 数据抽取相关
@@ -115,7 +126,6 @@ private slots:
 private slots:
     // 新增三角波检测相关槽函数
     void onTriangleAnomalyDetected(const TriangleAnomalyResult& anomaly);
-    void onTriangleStatsUpdated(const TriangleStats& stats);
     void onTriangleLearningProgress(int progress, int total);
     void onTriangleLearningCompleted(const TriangleStats& learnedStats);
 
