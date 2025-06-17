@@ -1389,26 +1389,21 @@ void USBVisualizerMainWindow::onTriangleLearningProgress(int current, int total)
 
 void USBVisualizerMainWindow::onTriangleLearningCompleted(const TriangleStats& stats)
 {
-    m_learningProgressLabel->setText("学习完成！√");
+    m_learningProgressLabel->setText("学习完成！");
 
-    m_triangleStatusLabel->setText(QString("已学习 - 周期:%1点, 波峰:%2, 波谷:%3, 上升斜率:4%, 下降斜率:5% , 波峰标准差:6%,"
-                                           " 波谷标准差:7%, 上升斜率标准差:8%, 下降斜率标准差:9%")
+    m_triangleStatusLabel->setText(QString("已学习 - 周期:%1点, 波峰:%2, 波谷:%3, 上升斜率:%4, 下降斜率:%5")
                                  .arg(stats.avgPeriodLength)
                                  .arg(stats.avgPeakValue, 0, 'f', 0)
                                  .arg(stats.avgValleyValue, 0, 'f', 0)
-                                 .arg(stats.avgRisingSlope, 0, 'f', 0)
-                                 .arg(stats.avgFallingSlope, 0, 'f', 0)
-                                 .arg(stats.peakValueStdDev, 0, 'f', 0)
-                                 .arg(stats.valleyValueStdDev, 0, 'f', 0)
-                                 .arg(stats.risingSlopeStdDev, 0, 'f', 0)
-                                 .arg(stats.fallingSlopeStdDev, 0, 'f', 0));
+                                 .arg(stats.avgRisingSlope)
+                                 .arg(stats.avgFallingSlope));
 
     // 更新详细状态
     m_initializationStatusLabel->setText("初始化: 完成");
     m_cycleValidityLabel->setText(QString("周期质量: %1个有效周期").arg(stats.totalCycles));
-    m_detectionQualityLabel->setText("检测质量: 正常监测中...");
+    m_detectionQualityLabel->setText("检测质量: 正常监测中");
 
-    qDebug() << "三角波学习完成，开始实时异常检测...";
+    qDebug() << "三角波学习完成，开始实时异常检测";
 }
 
 void USBVisualizerMainWindow::onTriangleStatsUpdated(const TriangleStats& stats)

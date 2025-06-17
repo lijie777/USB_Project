@@ -63,12 +63,14 @@ void OptimizedTriangleAnomalyDetector::processLearningData()
     if (m_learnedStats.isValid && m_learnedStats.totalCycles >= 2) {
         m_learningComplete = true;
         qDebug() << "学习完成！检测到" << m_learnedStats.totalCycles << "个完整周期";
-        qDebug() << QString("平均周期长度: %1, 波峰: %2±%3, 波谷: %4±%5")
+        qDebug() << QString("平均周期长度: %1, 波峰: %2±%3, 波谷: %4±%5, 上升斜率: %6，下降斜率: %7")
                     .arg(m_learnedStats.avgPeriodLength)
                     .arg(m_learnedStats.avgPeakValue, 0, 'f', 1)
                     .arg(m_learnedStats.peakValueStdDev, 0, 'f', 1)
                     .arg(m_learnedStats.avgValleyValue, 0, 'f', 1)
-                    .arg(m_learnedStats.valleyValueStdDev, 0, 'f', 1);
+                    .arg(m_learnedStats.valleyValueStdDev, 0, 'f', 1)
+                    .arg(m_learnedStats.avgRisingSlope, 0, 'f', 1)
+                    .arg(m_learnedStats.avgFallingSlope, 0, 'f', 1);
 
         emit learningCompleted(m_learnedStats);
     } else {
