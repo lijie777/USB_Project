@@ -26,7 +26,7 @@ LIBS += -lqcustomplot
 LIBS += -lusb-1.0
 
 
-unix:!macx: LIBS += -L/usr/local/lib/ -lcyusb
+#unix:!macx: LIBS += -L/usr/local/lib/ -lcyusb
 
 SOURCES += \
         main.cpp \
@@ -34,10 +34,10 @@ SOURCES += \
     USBDebugHelper.cpp \
     USBReaderThread.cpp \
     MCLogger.cpp \
-    OptimizedSawtoothAnomalyDetector.cpp \
     AnomalyRecorderThread.cpp \
-    AsymmetricTriangleWaveDetector.cpp \
-    OptimizedTriangleAnomalyDetector.cpp
+    OptimizedTriangleAnomalyDetector.cpp \
+    TriangleDetectorConfigDialog.cpp \
+    TriangleStatsDisplayDialog.cpp
 
 HEADERS += \
     USBVisualizerMainWindow.h \
@@ -148,10 +148,10 @@ HEADERS += \
     spdlog/version.h \
     LogQstring.h \
     MCLogger.h \
-    OptimizedSawtoothAnomalyDetector.h \
     AnomalyRecorderThread.h \
-    AsymmetricTriangleWaveDetector.h \
-    OptimizedTriangleAnomalyDetector.h
+    OptimizedTriangleAnomalyDetector.h \
+    TriangleDetectorConfigDialog.h \
+    TriangleStatsDisplayDialog.h
 
 FORMS +=
 

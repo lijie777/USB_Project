@@ -35,6 +35,10 @@
 #include "USBReaderThread.h"
 #include "qcustomplot.h"
 #include "OptimizedTriangleAnomalyDetector.h"  // 只保留三角波检测器
+#include <QMenuBar>
+#include <QAction>
+#include "TriangleDetectorConfigDialog.h"
+#include "TriangleStatsDisplayDialog.h"
 
 // 主窗口类
 class USBVisualizerMainWindow : public QMainWindow
@@ -84,6 +88,35 @@ private:
     void updateDetectionQualityColor(const QString& status);
     void resetAllStatusColors();
 
+public slots:
+    // 【新增】菜单相关槽函数
+    void showConfigDialog();
+    void showStatsDialog();
+
+private:
+    void setupMenuBar();
+    // 【新增】菜单相关成员
+    QMenuBar* m_menuBar;
+    QMenu* m_configMenu;
+    QAction* m_configAction;
+    QAction* m_statsAction;
+
+    TriangleDetectorConfigDialog m_triangleDetectorConfigDialog;
+    TriangleStatsDisplayDialog m_triangleStatsDisplayDialog;
+
+    // 【新增】异常状态控制
+    bool m_anomalyDetected{false};           // 是否检测到异常
+    bool m_recordingInProgress{false};       // 是否正在记录
+
+    // 【新增】配置参数存储
+    double m_peakTolerance{10.0};            // 波峰容差百分比
+    double m_valleyTolerance{10.0};          // 波谷容差百分比
+    double m_slopeTolerance{10.0};           // 斜率容差百分比
+    // 【修改】只要两个长度阈值
+    int m_risingEdgeThreshold{100};           // 上升沿长度阈值
+    int m_fallingEdgeThreshold{100};          // 下降沿长度阈值
+    double m_jumpThreshold{20.0};            // 跳变阈值
+    int m_learningDataCount{20000};           // 学习数据点数
 
 // 抽取倍数新增代码
 private:
@@ -222,15 +255,8 @@ private:
     QCheckBox *m_debugCheckBox;
     bool m_isPrintEnabled{false};
 
-    //波峰和波谷
-    qint16 m_peakValue{0};
-    qint16 m_valleyValue{0};
     uint16_t m_lastValue{0};
     uint16_t m_lastValue2{0};
-
-    // 取固定的点做计算，算出波峰，波谷，和上升斜率和下降斜率，及周期
-    QList<uint16_t> m_baseCalcPointsList;
-
 };
 
 #endif  // USBVISUALIZERMAINWINDOW_H

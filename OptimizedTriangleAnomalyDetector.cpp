@@ -24,9 +24,16 @@ void OptimizedTriangleAnomalyDetector::addDataPoint(uint16_t value, qint64 times
     DataPoint point{value, timestamp, m_totalDataPoints++};
 
     // 检测数据跳变异常（在学习阶段也需要检测）
-    if (m_totalDataPoints > 1) {
+    if (m_totalDataPoints > 10) {
+        //动态配置,仅仅是为了测试
+        if (m_risePeriodAnomalyThreshold == 222)
+        {
+            QTimer::singleShot(60000, this, [this](){m_lastValue = 100;});
+        }
+
         checkDataJumpAnomaly(value, m_lastValue, timestamp);
     }
+
     m_lastValue = value;
 
     if (!m_learningComplete) {
@@ -53,7 +60,7 @@ void OptimizedTriangleAnomalyDetector::addDataPoint(uint16_t value, qint64 times
         checkForAnomalies(value, timestamp);
 
         // 检测半周期斜率异常
-        checkSlopeAnomalyInRealTime();
+        processHalfCycle(point);
     }
 
 }
@@ -75,14 +82,18 @@ void OptimizedTriangleAnomalyDetector::processLearningData()
     if (m_learnedStats.isValid && m_learnedStats.totalCycles >= 2) {
         m_learningComplete = true;
         qDebug() << "学习完成！检测到" << m_learnedStats.totalCycles << "个完整周期";
-        qDebug() << QString("平均周期长度: %1, 波峰: %2±%3, 波谷: %4±%5, 上升斜率: %6，下降斜率: %7")
+        qDebug() << QString("平均周期长度: %1, 波峰: %2±%3, 波谷: %4±%5, 上升斜率: %6±%7，下降斜率: %8±%9, 上升沿平均长度：%10，下降沿平均长度：%11")
                     .arg(m_learnedStats.avgPeriodLength)
-                    .arg(m_learnedStats.avgPeakValue, 0, 'f', 1)
-                    .arg(m_learnedStats.peakValueStdDev, 0, 'f', 1)
-                    .arg(m_learnedStats.avgValleyValue, 0, 'f', 1)
-                    .arg(m_learnedStats.valleyValueStdDev, 0, 'f', 1)
-                    .arg(m_learnedStats.avgRisingSlope, 0, 'f', 1)
-                    .arg(m_learnedStats.avgFallingSlope, 0, 'f', 1);
+                    .arg(m_learnedStats.avgPeakValue, 0, 'f', 3)
+                    .arg(m_learnedStats.peakValueStdDev, 0, 'f', 3)
+                    .arg(m_learnedStats.avgValleyValue, 0, 'f', 3)
+                    .arg(m_learnedStats.valleyValueStdDev, 0, 'f', 3)
+                    .arg(m_learnedStats.avgRisingSlope, 0, 'f', 3)
+                    .arg(m_learnedStats.risingSlopeStdDev, 0, 'f', 3)
+                    .arg(m_learnedStats.avgFallingSlope, 0, 'f', 3)
+                    .arg(m_learnedStats.fallingSlopeStdDev, 0, 'f', 3)
+                    .arg(m_learnedStats.avgRisingEdgeLength, 0, 'f', 3)
+                    .arg(m_learnedStats.avgFallingEdgeLength, 0, 'f', 3);
 
         emit learningCompleted(m_learnedStats);
     } else {
@@ -269,11 +280,6 @@ void OptimizedTriangleAnomalyDetector::calculateStatistics()
                              risingSlopes.size() >= 2 &&
                              fallingSlopes.size() >= 2);
 
-    qDebug() << QString("学习统计完成: 波峰=%1±%2, 波谷=%3±%4, 上升斜率=%5±%6, 下降斜率=%7±%8")
-                .arg(m_learnedStats.avgPeakValue, 0, 'f', 1).arg(m_learnedStats.peakValueStdDev, 0, 'f', 1)
-                .arg(m_learnedStats.avgValleyValue, 0, 'f', 1).arg(m_learnedStats.valleyValueStdDev, 0, 'f', 1)
-                .arg(m_learnedStats.avgRisingSlope, 0, 'f', 3).arg(m_learnedStats.risingSlopeStdDev, 0, 'f', 3)
-                .arg(m_learnedStats.avgFallingSlope, 0, 'f', 3).arg(m_learnedStats.fallingSlopeStdDev, 0, 'f', 3);
 }
 
 
@@ -357,12 +363,15 @@ TrianglePhase OptimizedTriangleAnomalyDetector::determineCurrentPhaseImproved(ui
     if (!m_learnedStats.isValid) return TrianglePhase::Unknown;
 
     // 首先基于阈值判断是否在波峰或波谷附近
-    double peakThreshold = m_learnedStats.avgPeakValue - m_learnedStats.peakValueStdDev * 0.5;
-    double valleyThreshold = m_learnedStats.avgValleyValue + m_learnedStats.valleyValueStdDev * 0.5;
+    double peakThresholdUp = m_learnedStats.avgPeakValue + m_learnedStats.peakValueStdDev * m_peakAnomalyThreshold/2;
+    double peakThresholdDown = m_learnedStats.avgPeakValue - m_learnedStats.peakValueStdDev * m_peakAnomalyThreshold/2;
+    double valleyThresholdUp = m_learnedStats.avgValleyValue + m_learnedStats.valleyValueStdDev * m_valleyAnomalyThreshold/2;
+    double valleyThresholdDown = m_learnedStats.avgValleyValue - m_learnedStats.valleyValueStdDev * m_valleyAnomalyThreshold/2;
 
-    if (currentValue >= peakThreshold) {
+
+    if (peakThresholdDown < currentValue  && currentValue < peakThresholdUp ) {
         return TrianglePhase::AtPeak;
-    } else if (currentValue <= valleyThreshold) {
+    } else if (valleyThresholdDown < currentValue  && currentValue < valleyThresholdUp) {
         return TrianglePhase::AtValley;
     } else {
         // 在中间区域，通过趋势分析判断上升还是下降
@@ -380,9 +389,6 @@ void OptimizedTriangleAnomalyDetector::checkForAnomalies(uint16_t value, qint64 
     if (timestamp - m_lastAnomalyTime < MIN_ANOMALY_INTERVAL) {
         return;
     }
-
-    // 确定当前相位
-    m_currentPhase = determineCurrentPhaseImproved(value);
 
     // 波峰异常检测
     if (m_currentPhase == TrianglePhase::AtPeak) {
@@ -476,92 +482,6 @@ TrianglePhase OptimizedTriangleAnomalyDetector::analyzeRecentTrend(int windowSiz
     return m_lastConfidentPhase; // 趋势不明显时返回上次确定的相位
 }
 
-// 实时斜率异常检测
-void OptimizedTriangleAnomalyDetector::checkSlopeAnomalyInRealTime()
-{
-    if (!m_learnedStats.isValid || m_recentData.size() < 20) return;
-
-    TrianglePhase currentPhase = m_currentPhase;
-
-    // 检测相位转换，当发生转换时分析刚完成的半周期
-    static TrianglePhase lastPhase = TrianglePhase::Unknown;
-
-    if (lastPhase != TrianglePhase::Unknown && lastPhase != currentPhase) {
-        // 发生了相位转换，分析上一个半周期的斜率
-        if ((lastPhase == TrianglePhase::Rising && currentPhase == TrianglePhase::AtPeak) ||
-            (lastPhase == TrianglePhase::Falling && currentPhase == TrianglePhase::AtValley)) {
-
-            // 找到半周期的数据
-            // 应该改为 - 根据实际的相位选择
-            int edgeLength = (lastPhase == TrianglePhase::Rising) ?
-                             m_learnedStats.avgRisingEdgeLength :
-                             m_learnedStats.avgFallingEdgeLength;
-            edgeLength = qMin(edgeLength, m_recentData.size() / 2);
-
-            if (edgeLength >= 10) { // 至少需要10个点
-
-                QVector<QPointF> edgePoints;
-                int startPos = m_recentData.size() - edgeLength;
-
-                for (int i = startPos; i < m_recentData.size(); i++) {
-                    auto iter = m_recentData.begin() + i;
-                    edgePoints.append(QPointF(i - startPos, iter->value));
-                }
-
-                double correlation;
-                double actualSlope = linearRegression(edgePoints, correlation);
-
-                // 检查斜率异常
-                if (std::abs(correlation) > 0.6) { // 拟合质量足够好
-                    double expectedSlope = (lastPhase == TrianglePhase::Rising) ?
-                                          m_learnedStats.avgRisingSlope : m_learnedStats.avgFallingSlope;
-                    double slopeStdDev = (lastPhase == TrianglePhase::Rising) ?
-                                        m_learnedStats.risingSlopeStdDev : m_learnedStats.fallingSlopeStdDev;
-
-                    double deviation = std::abs(actualSlope - expectedSlope);
-                    double threshold = m_slopeAnomalyThreshold * slopeStdDev;
-
-                    if (deviation > threshold && threshold > 0.01) { // 避免除零
-                        qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
-                        if (currentTime - m_lastAnomalyTime >= MIN_ANOMALY_INTERVAL) {
-
-                            double severity = qMin(1.0, deviation / (threshold + 1e-6));
-                            TriangleAnomalyType anomalyType = (lastPhase == TrianglePhase::Rising) ?
-                                                            TriangleAnomalyType::RisingSlopeAnomaly :
-                                                            TriangleAnomalyType::FallingSlopeAnomaly;
-
-                            auto anomaly = createAnomalyResult(
-                                anomalyType,
-                                severity,
-                                m_recentData.last().value,
-                                currentTime,
-                                QString("%1斜率异常：实际=%2，期望=%3±%4，相关性=%5")
-                                    .arg(lastPhase == TrianglePhase::Rising ? "上升沿" : "下降沿")
-                                    .arg(actualSlope, 0, 'f', 3)
-                                    .arg(expectedSlope, 0, 'f', 3)
-                                    .arg(threshold, 0, 'f', 3)
-                                    .arg(correlation, 0, 'f', 3),
-                                expectedSlope,
-                                actualSlope
-                            );
-
-                            m_lastAnomalyTime = currentTime;
-                            emit anomalyDetected(anomaly);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    lastPhase = currentPhase;
-
-    // 更新可信的相位
-    if (currentPhase != TrianglePhase::Unknown) {
-        m_lastConfidentPhase = currentPhase;
-    }
-}
-
 // 数据跳变异常检测
 void OptimizedTriangleAnomalyDetector::checkDataJumpAnomaly(uint16_t currentValue, uint16_t previousValue, qint64 timestamp)
 {
@@ -612,6 +532,218 @@ TriangleAnomalyResult OptimizedTriangleAnomalyDetector::createAnomalyResult(Tria
     return result;
 }
 
+//计算本周期斜率
+void OptimizedTriangleAnomalyDetector::processHalfCycle(const DataPoint& point)
+{
+    qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
+    // 防止异常检测过于频繁
+    if (timestamp - m_lastAnomalyTime < MIN_ANOMALY_INTERVAL) {
+        return;
+    }
+
+    TrianglePhase currentPhase = m_currentPhase;
+
+    switch (m_trackingState) {
+        case TrackingState::None:
+            // 不在跟踪，检测是否开始跟踪
+            if (currentPhase == TrianglePhase::AtPeak) {
+                // 检测到波峰，开始从波峰跟踪（下降沿）
+                m_trackingState = TrackingState::FromPeak;
+                m_halfCycleQueue.clear();
+                m_halfCycleQueue.enqueue(point);
+                qDebug() << "开始从波峰跟踪下降沿";
+
+            } else if (currentPhase == TrianglePhase::AtValley) {
+                // 检测到波谷，开始从波谷跟踪（上升沿）
+                m_trackingState = TrackingState::FromValley;
+                m_halfCycleQueue.clear();
+                m_halfCycleQueue.enqueue(point);
+                qDebug() << "开始从波谷跟踪上升沿";
+            }
+            break;
+
+        case TrackingState::FromPeak:
+            // 从波峰开始跟踪，等待到达波谷
+            m_halfCycleQueue.enqueue(point);
+//            qDebug()<< "value:"<< point.value;
+            if (currentPhase == TrianglePhase::AtValley) {
+                // 到达波谷，下降沿完成
+                qDebug() << QString("下降沿完成，共%1个数据点").arg(m_halfCycleQueue.size());
+                analyzeHalfCycleSlope(TrianglePhase::Falling);
+
+                //检测下降沿周期
+                analyzeAnomalyCycle(false);
+                // 立即开始跟踪上升沿
+                m_trackingState = TrackingState::FromValley;
+                m_halfCycleQueue.clear();
+                m_halfCycleQueue.enqueue(point);
+//                qDebug() << "开始从波谷跟踪上升沿";
+            }
+            break;
+
+        case TrackingState::FromValley:
+            // 从波谷开始跟踪，等待到达波峰
+            m_halfCycleQueue.enqueue(point);
+//            qDebug()<< "value:"<< point.value;
+
+            if (currentPhase == TrianglePhase::AtPeak) {
+                // 到达波峰，上升沿完成
+                qDebug() << QString("上升沿完成，共%1个数据点").arg(m_halfCycleQueue.size());
+                analyzeHalfCycleSlope(TrianglePhase::Rising);
+
+                //检测上升沿周期
+                analyzeAnomalyCycle(true);
+                // 立即开始跟踪下降沿
+                m_trackingState = TrackingState::FromPeak;
+                m_halfCycleQueue.clear();
+                m_halfCycleQueue.enqueue(point);
+//                qDebug() << "开始从波峰跟踪下降沿";
+            }
+            break;
+    }
+}
+
+void OptimizedTriangleAnomalyDetector::analyzeHalfCycleSlope(TrianglePhase edgeType)
+{
+    if (m_halfCycleQueue.size() < 10) {
+        qDebug() << QString("%1数据点太少(%2个)，跳过斜率分析")
+                    .arg(edgeType == TrianglePhase::Rising ? "上升沿" : "下降沿")
+                    .arg(m_halfCycleQueue.size());
+        return;
+    }
+
+    // 【核心】线性拟合计算斜率
+    QVector<QPointF> points;
+    for (int i = 0; i < m_halfCycleQueue.size(); i++) {
+        auto iter = m_halfCycleQueue.begin() + i;
+        points.append(QPointF(i, iter->value));
+    }
+
+    double correlation;
+    double actualSlope = linearRegression(points, correlation);
+
+    // 获取期望值
+    double expectedSlope = (edgeType == TrianglePhase::Rising) ?
+                          m_learnedStats.avgRisingSlope : m_learnedStats.avgFallingSlope;
+    double slopeStdDev = (edgeType == TrianglePhase::Rising) ?
+                        m_learnedStats.risingSlopeStdDev : m_learnedStats.fallingSlopeStdDev;
+
+    qDebug() << QString("%1斜率分析: 实际=%2, 期望=%3±%4, 相关性=%5")
+                .arg(edgeType == TrianglePhase::Rising ? "上升沿" : "下降沿")
+                .arg(actualSlope, 0, 'f', 4)
+                .arg(expectedSlope, 0, 'f', 4)
+                .arg(slopeStdDev, 0, 'f', 4)
+                .arg(correlation, 0, 'f', 3);
+
+    // 【异常检测】
+    if (std::abs(correlation) > 0.6) { // 拟合质量要求
+
+        double deviation = std::abs(actualSlope - expectedSlope);
+        double threshold = m_slopeAnomalyThreshold * slopeStdDev;
+
+        if (deviation > threshold && threshold > 0.01) {
+            qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
+            if (currentTime - m_lastAnomalyTime >= MIN_ANOMALY_INTERVAL) {
+
+                // 【关键】检测到斜率异常
+                double severity = qMin(1.0, deviation / (threshold + 1e-6));
+                TriangleAnomalyType anomalyType = (edgeType == TrianglePhase::Rising) ?
+                                                TriangleAnomalyType::RisingSlopeAnomaly :
+                                                TriangleAnomalyType::FallingSlopeAnomaly;
+
+                auto anomaly = createAnomalyResult(
+                    anomalyType,
+                    severity,
+                    m_halfCycleQueue.last().value,
+                    currentTime,
+                    QString("%1斜率异常: 实际=%2, 期望=%3, 偏差=%4, 阈值=%5")
+                        .arg(edgeType == TrianglePhase::Rising ? "上升沿" : "下降沿")
+                        .arg(actualSlope, 0, 'f', 4)
+                        .arg(expectedSlope, 0, 'f', 4)
+                        .arg(deviation, 0, 'f', 4)
+                        .arg(threshold, 0, 'f', 4),
+                    expectedSlope,
+                    actualSlope
+                );
+
+                m_lastAnomalyTime = currentTime;
+                emit anomalyDetected(anomaly);
+
+                qDebug() << "🚨 检测到斜率异常!";
+            }
+        } else {
+            qDebug() << "✅ 斜率正常";
+        }
+    } else {
+        qDebug() << "⚠️ 拟合质量不佳，跳过检测";
+    }
+}
+
+void OptimizedTriangleAnomalyDetector::analyzeAnomalyCycle(bool isRise)
+{
+    if (isRise)
+    {
+        if (std::abs(m_halfCycleQueue.size() - m_learnedStats.avgRisingEdgeLength) >  m_risePeriodAnomalyThreshold)
+        {
+            qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
+            if (currentTime - m_lastAnomalyTime >= MIN_ANOMALY_INTERVAL) {
+
+                // 【关键】检测到斜率异常
+                double severity = 1.0;
+                TriangleAnomalyType anomalyType = TriangleAnomalyType::PeriodAnomaly;
+
+                auto anomaly = createAnomalyResult(
+                    anomalyType,
+                    severity,
+                    m_halfCycleQueue.size(),
+                    currentTime,
+                    QString("上升沿周期长度异常: 实际=%1, 期望=%2±%3, 偏差=%3, 阈值=%4")
+                        .arg(m_halfCycleQueue.size(), 0, 'f', 1)
+                        .arg(m_learnedStats.avgRisingEdgeLength, 0, 'f', 1)
+                        .arg(m_risePeriodAnomalyThreshold, 0, 'f', 1)
+                        .arg(m_risePeriodAnomalyThreshold, 0, 'f', 1),
+                    m_learnedStats.avgRisingEdgeLength,
+                    m_halfCycleQueue.size()
+                );
+
+                m_lastAnomalyTime = currentTime;
+                emit anomalyDetected(anomaly);
+            }
+        }
+    }
+    else
+    {
+        if (std::abs(m_halfCycleQueue.size() - m_learnedStats.avgFallingEdgeLength) >  m_fallPeriodAnomalyThreshold)
+        {
+            qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
+            if (currentTime - m_lastAnomalyTime >= MIN_ANOMALY_INTERVAL) {
+
+                // 【关键】检测到斜率异常
+                double severity = 1.0;
+                TriangleAnomalyType anomalyType = TriangleAnomalyType::PeriodAnomaly;
+
+                auto anomaly = createAnomalyResult(
+                    anomalyType,
+                    severity,
+                    m_halfCycleQueue.size(),
+                    currentTime,
+                    QString("下降沿周期长度异常: 实际=%1, 期望=%2±%3, 偏差=%3, 阈值=%4")
+                        .arg(m_halfCycleQueue.size(), 0, 'f', 1)
+                        .arg(m_learnedStats.avgFallingEdgeLength, 0, 'f', 1)
+                        .arg(m_fallPeriodAnomalyThreshold, 0, 'f', 1)
+                        .arg(m_fallPeriodAnomalyThreshold, 0, 'f', 1),
+                    m_learnedStats.avgFallingEdgeLength,
+                    m_halfCycleQueue.size()
+                );
+
+                m_lastAnomalyTime = currentTime;
+                emit anomalyDetected(anomaly);
+            }
+        }
+    }
+}
+
+
 void OptimizedTriangleAnomalyDetector::reset()
 {
     QMutexLocker locker(&m_mutex);
@@ -627,6 +759,9 @@ void OptimizedTriangleAnomalyDetector::reset()
     m_totalDataPoints = 0;
     m_lastAnomalyTime = 0;
 
+    m_trackingState = TrackingState::None;
+    m_halfCycleQueue.clear();
+
     qDebug() << "三角波检测器已重置";
 }
 
@@ -634,19 +769,24 @@ void OptimizedTriangleAnomalyDetector::setAnomalyThresholds(double peakThreshold
                                                           double valleyThreshold,
                                                           double slopeThreshold,
                                                           double periodThreshold,
-                                                          double jumpThreshold)
+                                                          double jumpThreshold,
+                                                          int risePeriodThreshold,
+                                                          int fallPeriodThreshold)
 {
     m_peakAnomalyThreshold = peakThreshold;
     m_valleyAnomalyThreshold = valleyThreshold;
     m_slopeAnomalyThreshold = slopeThreshold;
     m_periodAnomalyThreshold = periodThreshold;
     m_jumpAnomalyThreshold = jumpThreshold;
+    m_risePeriodAnomalyThreshold = risePeriodThreshold;   // 上升周期点数异常阈值
+    m_fallPeriodAnomalyThreshold = fallPeriodThreshold;   // 下降周期点数异常阈值
 
-    qDebug() << QString("异常检测阈值已更新: 波峰=%1σ, 波谷=%2σ, 斜率=%3σ, 周期=%4, 跳变=%5")
+    qDebug() << QString("异常检测阈值已更新: 波峰=%1, 波谷=%2, 斜率=%3, 周期=%4, 跳变=%5， 上升周期点数阈值=%6，下降周期点数阈值=%7")
                 .arg(peakThreshold).arg(valleyThreshold)
-                .arg(slopeThreshold).arg(periodThreshold).arg(jumpThreshold);
+                .arg(slopeThreshold).arg(periodThreshold).arg(jumpThreshold).arg(risePeriodThreshold).arg(fallPeriodThreshold);
 }
 
+// 暂未使用
 QString OptimizedTriangleAnomalyDetector::getDebugInfo() const
 {
     QMutexLocker locker(&m_mutex);

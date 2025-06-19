@@ -32,7 +32,7 @@ public:
 signals:
     void recordingFinished(int totalPoints, const QString& filename);
     void recordingError(const QString& error);
-
+    void acquireAnomalyDataStoped();//停止异常信号采集
 protected:
     void run() override;
 

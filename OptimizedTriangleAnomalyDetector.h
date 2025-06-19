@@ -82,16 +82,18 @@ public:
     // 配置参数
     void setAnomalyThresholds(double peakThreshold = 3.0,
                              double valleyThreshold = 3.0,
-                             double slopeThreshold = 2.0,
+                             double slopeThreshold = 20.0,
                              double periodThreshold = 0.3,
-                             double jumpThreshold = 10.0); // 【新增参数】跳变阈值
+                             double jumpThreshold = 30.0,// 【新增参数】跳变阈值
+                             int risePeriodThreshold = 100,
+                             int fallPeriodThreshold = 100);
 
     // 状态查询
     bool isLearningComplete() const { return m_learningComplete; }
     TriangleStats getLearnedStats() const { return m_learnedStats; }
     TrianglePhase getCurrentPhase() const { return m_currentPhase; }
 
-    // 调试信息
+    // 调试信息(暂未使用)
     QString getDebugInfo() const;
 
 signals:
@@ -170,8 +172,6 @@ private:
     // 【新增】专门的跳变异常检测
     void checkDataJumpAnomaly(uint16_t currentValue, uint16_t previousValue, qint64 timestamp);
 
-    // 【新增】实时斜率异常检测 - 检测完整半周期的斜率
-    void checkSlopeAnomalyInRealTime();
 
     TriangleAnomalyResult createAnomalyResult(TriangleAnomalyType type,
                                             double severity,
@@ -183,12 +183,11 @@ private:
 
     // 数据管理
     QQueue<DataPoint> m_learningData;      // 学习阶段数据
-    QQueue<DataPoint> m_recentData;        // 最近的数据点（用于实时分析）
     QList<PeakValleyPoint> m_peaksValleys; // 波峰波谷点
     QList<CycleInfo> m_cycles;             // 周期信息
 
     // 学习阶段参数
-    int m_learningDataCount{15000};         // 学习数据点数
+    int m_learningDataCount{20000};         // 学习数据点数
     bool m_learningComplete{false};        // 学习是否完成
     TriangleStats m_learnedStats;          // 学习到的统计信息
 
@@ -204,13 +203,24 @@ private:
     bool m_inFallingEdge{false};           // 是否在下降沿
     int m_edgeStartIndex{-1};              // 当前边沿开始索引
 
-    // 【删除但注释保留】原来的简单状态跟踪
-    // int m_currentCycleStartIndex{-1};      // 当前周期开始索引
-    // uint16_t m_lastPeak{0};                // 最近的波峰值
-    // uint16_t m_lastValley{0};              // 最近的波谷值
-    // 删除原因：用更详细的半周期跟踪替代，提供更精确的状态信息
 
+    QQueue<DataPoint> m_recentData;        // 最近的数据点（用于实时分析）
     int m_recentDataSize{50};              // 【修改】从100改为50，减少内存占用
+
+    // 【极简】半周期跟踪
+    enum class TrackingState {
+        None,        // 不在跟踪
+        FromPeak,    // 从波峰开始跟踪（收集下降沿数据）
+        FromValley   // 从波谷开始跟踪（收集上升沿数据）
+    };
+    //半周期斜率计算
+    void processHalfCycle(const DataPoint& point);
+    void analyzeHalfCycleSlope(TrianglePhase edgeType);
+    void analyzeAnomalyCycle(bool isRise);//检测半周期是否异常
+
+    TrackingState m_trackingState{TrackingState::None};
+    QQueue<DataPoint> m_halfCycleQueue;  // 当前半周期的数据点队列
+
 
     // 异常检测阈值
     double m_peakAnomalyThreshold{3.0};    // 波峰异常阈值
@@ -218,12 +228,15 @@ private:
     double m_slopeAnomalyThreshold{2.0};   // 斜率异常阈值
     double m_periodAnomalyThreshold{0.3};  // 周期异常阈值 (比例)
     double m_jumpAnomalyThreshold{10.0};   // 【新增】跳变异常阈值
+    double m_risePeriodAnomalyThreshold{100.0};   // 上升周期点数异常阈值
+    double m_fallPeriodAnomalyThreshold{100.0};   // 下降周期点数异常阈值
+
 
     // 状态跟踪
     int m_totalDataPoints{0};              // 总数据点数
     qint64 m_lastAnomalyTime{0};           // 上次异常检测时间
     uint16_t m_lastValue{0};               // 【新增】上一个数据值 - 用于跳变检测
-    static constexpr int MIN_ANOMALY_INTERVAL = 2000; // 【修改】在检测到一个异常后在接下来的2000ms内不会报告新的异常
+    static constexpr int MIN_ANOMALY_INTERVAL = 20000000; // 【修改】在检测到一个异常后在接下来的MIN_ANOMALY_INTERVAL ms内不会报告新的异常
 
     // 调试用
     mutable QMutex m_mutex;

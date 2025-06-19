@@ -2,7 +2,7 @@
 #include "AnomalyRecorderThread.h"
 
 
-#define RECORED_POINTS 20000 //两万个点，大概10秒的数据，因为一秒大概2048个数据
+#define RECORED_POINTS 20000 // 记录的点的数量
 
 AnomalyRecorderThread::AnomalyRecorderThread(QObject *parent)
     : QThread(parent)
@@ -51,15 +51,18 @@ void AnomalyRecorderThread::stopRecording()
 
 void AnomalyRecorderThread::addData(uint16_t value, qint64 timestamp)
 {
-    QMutexLocker locker(&m_mutex);
+    m_mutex.lock();
 
     RecordData data;
     data.value = value;
     data.timestamp = timestamp;
+
     data.index = m_totalRecorded + m_dataQueue.size() + 1;
 
     m_dataQueue.enqueue(data);
-    //如果当前队列以及超过10000个数据，那么记录
+
+    m_mutex.unlock();
+    //如果当前队列以及超过20000个数据，那么记录
     if (m_dataQueue.size() > RECORED_POINTS)
     {
         m_dataAvailable.wakeOne();
@@ -77,7 +80,7 @@ void AnomalyRecorderThread::run()
     }
 
     QTextStream stream(&file);
-
+    stream.setCodec("UTF-8");
     // 写入文件头
     if (!writeHeader(stream)) {
         emit recordingError("写入文件头失败");
@@ -86,8 +89,7 @@ void AnomalyRecorderThread::run()
 
     // 主循环
     while (!m_stopRequested || !m_dataQueue.isEmpty()) {
-        QMutexLocker locker(&m_mutex);
-
+        m_mutex.lock();
         // 等待数据
         if (m_dataQueue.isEmpty()) {
             m_dataAvailable.wait(&m_mutex);  // 无限等待
@@ -101,7 +103,7 @@ void AnomalyRecorderThread::run()
             batch.append(m_dataQueue.dequeue());
         }
 
-        locker.unlock();  // 解锁，允许其他线程添加数据
+        m_mutex.unlock();
 
         // 写入数据（不需要锁）
         for (const auto& data : batch) {
@@ -110,10 +112,12 @@ void AnomalyRecorderThread::run()
         }
 
         // 定期刷新
-        if (m_totalRecorded % 1000 == 0) {
-            stream.flush();
-            LOG_DEBUG_CL("已记录 {} 个数据点", m_totalRecorded.load());
-        }
+//        if (m_totalRecorded % 1000 == 0) {
+//            stream.flush();
+//            LOG_DEBUG_CL("已记录 {} 个数据点", m_totalRecorded.load());
+//        }
+
+        break;
     }
 
     // 写入文件尾
@@ -121,8 +125,11 @@ void AnomalyRecorderThread::run()
     stream.flush();
     file.close();
 
-    LOG_INFO("异常记录完成: {} 个数据点", m_totalRecorded.load());
+    LOG_INFO_CL("异常记录完成: {} 个数据点", m_totalRecorded.load());
     emit recordingFinished(m_totalRecorded, m_filename);
+
+    //停止线程
+    m_stopRequested = false;
 }
 
 // 修改文件头写入方法
@@ -151,28 +158,28 @@ bool AnomalyRecorderThread::writeHeader(QTextStream& stream)
     }
 
     // 写入详细的文件头信息
-    stream << "# 三角波异常记录文件\n";
-    stream << "# 生成时间: " << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
-    stream << "# 文件格式版本: 2.0\n";
+    stream << QString("# 三角波异常记录文件\n");
+    stream << QString("# 生成时间: ") << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
+    stream << QString("# 文件格式版本: 2.0\n");
     stream << "#\n";
-    stream << "# === 异常触发信息 ===\n";
-    stream << "# 异常类型: " << anomalyTypeStr << "\n";
-    stream << "# 异常严重程度: " << QString::number(m_triggerInfo.severity * 100, 'f', 2) << "%\n";
-    stream << "# 触发值: " << m_triggerInfo.triggerValue << "\n";
-    stream << "# 触发时间戳: " << m_triggerInfo.timestamp << " ms\n";
-    stream << "# 检测阶段: " << phaseStr << "\n";
-    stream << "# 异常描述: " << m_triggerInfo.description << "\n";
+    stream << QString("# === 异常触发信息 ===\n");
+    stream << QString("# 异常类型: " )<< anomalyTypeStr << "\n";
+    stream << QString("# 异常严重程度: " )<< QString::number(m_triggerInfo.severity * 100, 'f', 2) << "%\n";
+    stream << QString("# 触发值: ") << m_triggerInfo.triggerValue << "\n";
+    stream << QString("# 触发时间戳: " )<< m_triggerInfo.timestamp << " ms\n";
+    stream << QString("# 检测阶段: ") << phaseStr << "\n";
+    stream << QString("# 异常描述: " )<< m_triggerInfo.description << "\n";
     stream << "#\n";
-    stream << "# === 记录配置 ===\n";
-    stream << "# 记录开始时间: " << QDateTime::fromMSecsSinceEpoch(m_startTime).toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
-    stream << "# 采样率: 2560 Hz (估算)\n";
-    stream << "# 数据格式: 12位ADC值 (0-4095)\n";
+    stream << QString("# === 记录配置 ===\n");
+    stream << QString("# 记录开始时间: ") << QDateTime::fromMSecsSinceEpoch(m_startTime).toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
+//    stream << "# 采样率: 2560 Hz (估算)\n";
+    stream << QString("# 数据格式: 12位ADC值 (0-4095)\n");
     stream << "#\n";
-    stream << "# === 数据列说明 ===\n";
-    stream << "# Index: 数据点序号 (从1开始)\n";
-    stream << "# Timestamp(ms): 绝对时间戳 (毫秒)\n";
-    stream << "# Value: ADC采样值 (0-4095)\n";
-    stream << "# RelativeTime(ms): 相对于记录开始的时间 (毫秒)\n";
+    stream << QString("# === 数据列说明 ===\n");
+    stream << QString("# Index: 数据点序号 (从1开始)\n");
+    stream << QString("# Timestamp(ms): 绝对时间戳 (毫秒)\n");
+    stream << QString("# Value: ADC采样值 (0-4095)\n");
+    stream << QString("# RelativeTime(ms): 相对于记录开始的时间 (毫秒)\n");
     stream << "#\n";
 
     // CSV头
@@ -197,13 +204,13 @@ void AnomalyRecorderThread::writeFooter(QTextStream& stream)
     qint64 recordingDuration = endTime - m_startTime;
 
     stream << "#\n";
-    stream << "# === 记录完成信息 ===\n";
-    stream << "# 记录结束时间: " << QDateTime::fromMSecsSinceEpoch(endTime).toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
-    stream << "# 总数据点: " << m_totalRecorded << "\n";
-    stream << "# 记录时长: " << recordingDuration << " ms (" << (recordingDuration / 1000.0) << " 秒)\n";
-    stream << "# 平均采样率: " << QString::number((m_totalRecorded * 1000.0) / recordingDuration, 'f', 2) << " Hz\n";
+    stream << QString("# === 记录完成信息 ===\n");
+    stream << QString("# 记录结束时间: ") << QDateTime::fromMSecsSinceEpoch(endTime).toString("yyyy-MM-dd HH:mm:ss.zzz") << "\n";
+    stream << QString("# 总数据点: " )<< m_totalRecorded << "\n";
+    stream << QString("# 记录时长: " )<< recordingDuration << " ms (" << (recordingDuration / 1000.0) << QString(" 秒)\n");
+    stream << QString("# 平均采样率: ") << QString::number((m_totalRecorded * 1000.0) / recordingDuration, 'f', 2) << " Hz\n";
     stream << "#\n";
-    stream << "# 文件结束\n";
+    stream << QString("# 文件结束\n");
 }
 
 // 新增：三角波异常类型转换函数
@@ -220,6 +227,8 @@ QString AnomalyRecorderThread::getTriangleAnomalyTypeString(TriangleAnomalyType 
             return "波谷值异常";
         case TriangleAnomalyType::PeriodAnomaly:
             return "周期异常";
+        case TriangleAnomalyType::DataJumpAnomaly:
+            return "数据跳变异常";
         default:
             return "未知异常";
     }
